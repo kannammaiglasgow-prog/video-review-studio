@@ -1,5 +1,6 @@
 import type { OutputLanguage } from "@/lib/config";
 import { createVideoMetadata } from "./gemini";
+import type { ScenePlanEntry } from "./sentences";
 
 // Pexels/Pixabay-க்கு English queries மட்டும் நல்ல results தரும் — local mode-ல் Tamil/Hindi-ஐ English-ஆக மொழிபெயர்க்க முடியாது.
 // எனவே scene-per-scene முன்னுரிமை: "|" custom scene groups > Gemini sceneKeywords (Premium) > local English segmentation > flat custom/generic (எல்லா scenes-க்கும் ஒரே terms).
@@ -28,18 +29,10 @@ function tokenize(text: string) {
   return text.split(/[\s,.!?;:"'()।॥]+/).map((word) => word.trim()).filter(Boolean);
 }
 
-export function segmentScenes(script: string, sceneCount: number, language: OutputLanguage) {
-  const words = tokenize(script);
-  if (!words.length || sceneCount <= 0) return [] as string[][];
-  const perScene = Math.ceil(words.length / sceneCount);
-  const scenes: string[][] = [];
-  for (let index = 0; index < sceneCount; index += 1) {
-    const chunk = words.slice(index * perScene, (index + 1) * perScene);
-    const stop = stopWords[language];
-    const distinct = [...new Set(chunk.map((word) => word.toLowerCase()).filter((word) => word.length > 1 && !stop.has(word)))];
-    scenes.push(distinct.slice(0, 6));
-  }
-  return scenes;
+export function extractSceneWords(text: string, language: OutputLanguage) {
+  const stop = stopWords[language];
+  const words = tokenize(text).map((word) => word.toLowerCase()).filter((word) => word.length > 1 && !stop.has(word));
+  return [...new Set(words)].slice(0, 6);
 }
 
 // முழு script-லும் அடிக்கடி வரும் content words-ஐ "overall theme"-ஆக எடுத்து, ஒவ்வொரு scene-க்கும் சேர்க்கிறோம் —
@@ -63,9 +56,11 @@ export function localTitleFromText(text: string, maxLength = 60) {
   return cleaned.length < trimmed.length ? `${cleaned}…` : cleaned || "Video";
 }
 
+// items-ஐ count அளவுக்கு proportionally stretch/compress செய்யும் — modulo wraparound போல் இல்லாமல்,
+// scene position-ஐ பொறுத்து smooth-ஆக பரவும் (இடைநடுவே திடீரென முதல் item-க்கு "restart" ஆகாது).
 export function alignSceneCount<T>(items: T[], count: number): T[] {
   if (!items.length || count <= 0) return [];
-  return Array.from({ length: count }, (_, index) => items[index % items.length]);
+  return Array.from({ length: count }, (_, index) => items[Math.min(items.length - 1, Math.floor((index / count) * items.length))]);
 }
 
 // "temple architecture | election crowd | tamil politics" — ஒவ்வொரு "|" group-உம் ஒரு scene range-க்கு
@@ -86,13 +81,13 @@ function distributeGroupsToScenes(groups: string[][], sceneCount: number): strin
 
 export async function resolveSceneKeywords(options: {
   script: string;
+  scenePlan: ScenePlanEntry[];
   language: OutputLanguage;
-  sceneCount: number;
   customKeywords?: string;
   allowGemini: boolean;
   geminiSceneKeywords?: string[][];
 }): Promise<{ sceneSearchTerms: string[][]; source: "custom-scenes" | "gemini" | "local-english" | "custom-flat" | "generic" }> {
-  const { sceneCount } = options;
+  const sceneCount = options.scenePlan.length;
 
   const sceneGroups = parseSceneGroups(options.customKeywords);
   if (sceneGroups) return { sceneSearchTerms: distributeGroupsToScenes(sceneGroups, sceneCount), source: "custom-scenes" };
@@ -101,7 +96,7 @@ export async function resolveSceneKeywords(options: {
 
   if (options.language === "en") {
     const themeWords = extractThemeWords(options.script, "en");
-    const localScenes = segmentScenes(options.script, sceneCount, "en");
+    const localScenes = options.scenePlan.map((scene) => extractSceneWords(scene.text, "en"));
     if (localScenes.some((words) => words.length) || themeWords.length) {
       const sceneSearchTerms = localScenes.map((words) => {
         if (words.length) return [...new Set([...words, ...themeWords])].slice(0, 5);

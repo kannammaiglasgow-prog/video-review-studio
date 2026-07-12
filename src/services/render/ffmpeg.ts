@@ -4,8 +4,10 @@ import { spawn } from "node:child_process";
 import { config } from "@/lib/config";
 import { probeAudioDuration } from "./ffprobe";
 
-export type RenderSpec = { aspectRatio: "9:16" | "16:9"; audioPath: string; clips: string[]; subtitlePath?: string; outputPath: string; targetDuration: number };
+export type SceneClip = { path: string; seconds: number };
+export type RenderSpec = { aspectRatio: "9:16" | "16:9"; audioPath: string; scenes: SceneClip[]; subtitlePath?: string; outputPath: string; targetDuration: number };
 
+// sentence-timing இல்லாத இடங்களில் (Gemini prompt-க்கு upfront estimate) இன்னும் பயன்படும் "ideal" scene length
 export const CLIP_DURATION_SECONDS = 3;
 
 export function requiredClipCount(duration: number) {
@@ -31,20 +33,21 @@ function concatPath(filePath: string) {
 }
 
 export async function renderVideo(spec: RenderSpec) {
-  if (!spec.clips.length) throw new Error("Render செய்ய stock footage தேவை");
+  if (!spec.scenes.length) throw new Error("Render செய்ய stock footage தேவை");
   const directory = path.dirname(spec.outputPath);
   const workDir = path.join(directory, "render-work");
   await fsp.mkdir(workDir, { recursive: true });
   const { width, height } = dimensions(spec.aspectRatio);
   const audioDuration = await probeAudioDuration(spec.audioPath);
   const duration = spec.targetDuration;
-  const sceneCount = requiredClipCount(duration);
-  if (spec.clips.length < sceneCount) throw new Error(`${sceneCount} தனித்தனி clips தேவை; ${spec.clips.length} மட்டும் கிடைத்தது`);
+  // scenes-ன் sentence-estimated durations, drift தவிர்க்க duration-க்கு சரியாக பொருந்தும்படி rescale செய்யப்படும்
+  const rawTotal = spec.scenes.reduce((sum, scene) => sum + scene.seconds, 0) || duration;
+  const scale = duration / rawTotal;
   const normalized: string[] = [];
 
-  for (let index = 0; index < sceneCount; index += 1) {
-    const clipPath = spec.clips[index];
-    const sceneDuration = Math.min(CLIP_DURATION_SECONDS, Math.max(0.1, duration - index * CLIP_DURATION_SECONDS));
+  for (let index = 0; index < spec.scenes.length; index += 1) {
+    const clipPath = spec.scenes[index].path;
+    const sceneDuration = Math.max(0.3, spec.scenes[index].seconds * scale);
     const output = path.join(workDir, `scene-${index}.mp4`);
     const isImage = /\.(jpe?g|png|webp)$/i.test(clipPath);
     if (isImage) {

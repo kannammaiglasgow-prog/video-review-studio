@@ -4,12 +4,13 @@ import { database } from "@/lib/database";
 import { config, type OutputLanguage } from "@/lib/config";
 import { createVideoMetadata, geminiReviewProvider, geminiSpeechProvider } from "./providers/gemini";
 import { alignSceneCount, localTitleFromText, resolveSceneKeywords } from "./providers/keywords";
+import { buildScenePlan } from "./providers/sentences";
 import { downloadScenedStockMedia } from "./providers/stock-media";
 import { fetchNewsArticle } from "./providers/news";
 import { piperSpeechProvider } from "./providers/piper";
 import { selectTranscriptSegment, youtubeTranscriptProvider } from "./providers/transcript";
 import { probeAudioDuration } from "./render/ffprobe";
-import { renderVideo, requiredClipCount } from "./render/ffmpeg";
+import { CLIP_DURATION_SECONDS, renderVideo, requiredClipCount } from "./render/ffmpeg";
 
 export const PIPELINE_STAGES = ["transcript", "analysis", "script", "tts", "stock-media", "render", "complete"] as const;
 export type PipelineStage = (typeof PIPELINE_STAGES)[number];
@@ -63,7 +64,7 @@ type ProjectRow = {
   id: number; youtube_url: string; source_type: "youtube" | "news" | "text" | "voiceover"; script_mode: "rewrite" | "as-is";
   start_time: string; end_time: string; stance: string; tone: string; persona: string; voice: string;
   tts_provider: "local" | "gemini" | "upload"; aspect_ratio: "9:16" | "16:9"; duration: string; custom_instruction?: string;
-  transcript?: string; audio_path?: string; output_language: OutputLanguage; stock_keywords?: string; allow_gemini_keywords: number;
+  transcript?: string; review_script?: string; audio_path?: string; output_language: OutputLanguage; stock_keywords?: string; allow_gemini_keywords: number;
   tier: "free" | "premium";
 };
 
@@ -147,10 +148,13 @@ export async function processProject(projectId: number) {
     updateStatus("stock-media");
     await fs.mkdir(projectDir, { recursive: true });
     const targetDuration = await finalRenderDuration(project.duration, audioPath, isVoiceover || project.duration === AUTO_DURATION_LABEL);
-    const requiredClips = requiredClipCount(targetDuration);
-    // ஒவ்வொரு 3-வினாடி scene-க்கும் அப்போது பேசப்படும் விஷயத்துக்கே பொருத்தமான தனி clip தேடி assign செய்யும் — positional-ஆக இல்லை
+    // Fixed cadence-க்கு பதிலா, sentence boundaries-ஐ வைத்து variable-length scenes கணக்கிடப்படுகிறது —
+    // ஒரு scene-cut வாக்கியம் நடுவில் வராது, நீண்ட வாக்கியங்கள் தானாக பல scenes-ஆக பிரியும்
+    const scenePlan = buildScenePlan(script, targetDuration, CLIP_DURATION_SECONDS);
+    const requiredClips = scenePlan.length;
+    // ஒவ்வொரு scene-க்கும் அப்போது பேசப்படும் விஷயத்துக்கே பொருத்தமான தனி clip தேடி assign செய்யும் — positional-ஆக இல்லை
     const { sceneSearchTerms } = await resolveSceneKeywords({
-      script, language: project.output_language, sceneCount: requiredClips, customKeywords: project.stock_keywords,
+      script, scenePlan, language: project.output_language, customKeywords: project.stock_keywords,
       allowGemini: project.tier !== "free" && (isVoiceover ? Boolean(project.allow_gemini_keywords) : true),
       geminiSceneKeywords,
     });
@@ -160,7 +164,8 @@ export async function processProject(projectId: number) {
 
     updateStatus("render");
     const outputPath = path.join(projectDir, `review-${project.aspect_ratio.replace(":", "x")}.mp4`);
-    const rendered = await renderVideo({ aspectRatio: project.aspect_ratio, audioPath, clips: clipPaths, outputPath, targetDuration });
+    const scenes = clipPaths.map((clipPath, index) => ({ path: clipPath, seconds: scenePlan[index].seconds }));
+    const rendered = await renderVideo({ aspectRatio: project.aspect_ratio, audioPath, scenes, outputPath, targetDuration });
     db.prepare("UPDATE projects SET output_path=?,status='complete',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(outputPath, projectId);
     db.prepare("UPDATE render_jobs SET stage='complete',progress=100,updated_at=CURRENT_TIMESTAMP WHERE project_id=?").run(projectId);
     return { projectId, status: "complete", title, assetCount: clipPaths.length, audioPath, outputPath: rendered.outputPath };
@@ -186,9 +191,11 @@ export async function rerenderProject(projectId: number) {
   const project = db.prepare("SELECT * FROM projects WHERE id = ?").get(projectId) as ProjectRow | undefined;
   if (!project) throw new Error("Project கிடைக்கவில்லை");
   if (!project.audio_path) throw new Error("Voiceover இல்லை — முதலில் video-ஐ முழுமையாக உருவாக்கவும்");
+  const script = (project.review_script || project.transcript || "").trim();
   let clipPaths = await stockClipPaths(projectId);
   const targetDuration = await finalRenderDuration(project.duration, project.audio_path, project.source_type === "voiceover" || project.duration === AUTO_DURATION_LABEL);
-  const requiredClips = requiredClipCount(targetDuration);
+  const scenePlan = buildScenePlan(script, targetDuration, CLIP_DURATION_SECONDS);
+  const requiredClips = scenePlan.length;
   if (clipPaths.length < requiredClips) {
     const job = db.prepare("SELECT payload FROM render_jobs WHERE project_id=? ORDER BY id DESC LIMIT 1").get(projectId) as { payload: string | null } | undefined;
     let payload: { title?: string; sceneSearchTerms?: string[][] } = {};
@@ -202,7 +209,8 @@ export async function rerenderProject(projectId: number) {
   db.prepare("UPDATE projects SET status='render',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(projectId);
   try {
     const outputPath = path.join(config.mediaRoot, String(projectId), `review-${project.aspect_ratio.replace(":", "x")}.mp4`);
-    await renderVideo({ aspectRatio: project.aspect_ratio, audioPath: project.audio_path, clips: clipPaths, outputPath, targetDuration });
+    const scenes = clipPaths.map((clipPath, index) => ({ path: clipPath, seconds: scenePlan[index].seconds }));
+    await renderVideo({ aspectRatio: project.aspect_ratio, audioPath: project.audio_path, scenes, outputPath, targetDuration });
     db.prepare("UPDATE projects SET output_path=?,status='complete',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(outputPath, projectId);
     return { projectId, status: "complete", clipCount: clipPaths.length, outputPath };
   } catch (error) {
