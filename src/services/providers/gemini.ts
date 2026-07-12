@@ -1,6 +1,13 @@
 import fs from "node:fs/promises";
-import { config } from "@/lib/config";
+import { config, type OutputLanguage } from "@/lib/config";
 import type { ReviewProvider, SpeechProvider } from "./types";
+
+const languageNames: Record<OutputLanguage, string> = { ta: "Tamil", en: "English", hi: "Hindi" };
+const readInstruction: Record<OutputLanguage, string> = {
+  ta: "தமிழில் தெளிவாகவும் இயல்பாகவும் வாசிக்கவும்",
+  en: "Read clearly and naturally in English",
+  hi: "स्पष्ट और स्वाभाविक रूप से हिंदी में पढ़ें",
+};
 
 const baseUrl = "https://generativelanguage.googleapis.com/v1beta";
 
@@ -119,8 +126,8 @@ export const geminiReviewProvider: ReviewProvider = {
   },
 };
 
-export async function createVideoMetadata(script: string): Promise<{ title: string; searchTerms: string[] }> {
-  const result = await requestJson<{ title?: unknown; searchTerms?: unknown }>(["gemini-3.5-flash", "gemini-2.5-flash"], `கீழே உள்ள தமிழ் voice-over script-க்கு பொருத்தமான தலைப்பும், stock video தேட 5 English keywords-உம் மட்டும் கொடுக்கவும். Script-ஐ மாற்ற வேண்டாம்.\n\nScript:\n${script}\n\nJSON மட்டும் பதிலளிக்கவும்: {"title":"...","searchTerms":["English keyword"]}`, 0.4);
+export async function createVideoMetadata(script: string, language: OutputLanguage = "ta"): Promise<{ title: string; searchTerms: string[] }> {
+  const result = await requestJson<{ title?: unknown; searchTerms?: unknown }>(["gemini-3.5-flash", "gemini-2.5-flash"], `கீழே உள்ள ${languageNames[language]} voice-over script-க்கு பொருத்தமான ${languageNames[language]} தலைப்பும், stock video தேட 5 English keywords-உம் மட்டும் கொடுக்கவும் (title script மொழியிலேயே இருக்க வேண்டும், searchTerms எப்போதும் English). Script-ஐ மாற்ற வேண்டாம்.\n\nScript:\n${script}\n\nJSON மட்டும் பதிலளிக்கவும்: {"title":"...","searchTerms":["English keyword"]}`, 0.4);
   const title = typeof result.title === "string" ? result.title.trim() : "";
   const searchTerms = Array.isArray(result.searchTerms) ? result.searchTerms.filter((term): term is string => typeof term === "string" && term.trim().length > 0).map((term) => term.trim()).slice(0, 10) : [];
   if (!title) throw new Error("Gemini metadata-ல் title இல்லை");
@@ -139,9 +146,9 @@ function pcmToWav(pcm: Buffer, sampleRate = 24000) {
 const voiceMap: Record<string, string> = { "ஆண் — இயல்பான": "Puck", "பெண் — இயல்பான": "Kore", "ஆண் — ஆற்றலான": "Charon", "பெண் — ஆற்றலான": "Aoede", "டிராமாட்டிக்": "Fenrir" };
 
 export const geminiSpeechProvider: SpeechProvider = {
-  async synthesize(text, outputPath, voice) {
+  async synthesize(text, outputPath, voice, language = "ta") {
     const data = await requestWithFallback(["gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts"], {
-      contents: [{ parts: [{ text: `தமிழில் தெளிவாகவும் இயல்பாகவும் வாசிக்கவும்: ${text}` }] }],
+      contents: [{ parts: [{ text: `${readInstruction[language]}: ${text}` }] }],
       generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceMap[voice] || "Kore" } } } },
     });
     const audio = data?.candidates?.[0]?.content?.parts?.find((part: { inlineData?: { data?: string } }) => part.inlineData?.data)?.inlineData?.data;

@@ -1,22 +1,29 @@
 import fs from "node:fs";
 import { spawn } from "node:child_process";
-import { config } from "@/lib/config";
+import { config, type OutputLanguage } from "@/lib/config";
 import type { SpeechProvider } from "./types";
 
+const languageNames: Record<OutputLanguage, string> = { ta: "Tamil", en: "English", hi: "Hindi" };
+
 export const piperSpeechProvider: SpeechProvider = {
-  async synthesize(text, outputPath) {
+  async synthesize(text, outputPath, _voice, language = "ta") {
+    const modelPath = config.piper.models[language];
     if (!fs.existsSync(config.piper.executablePath)) {
       throw new Error("Local Piper TTS நிறுவப்படவில்லை. .venv-local-tts environment-ஐ சரிபார்க்கவும்");
     }
-    if (!fs.existsSync(config.piper.modelPath)) {
-      throw new Error("Tamil Piper voice model கிடைக்கவில்லை. models/piper folder-ல் model files-ஐச் சேர்க்கவும்");
+    if (!fs.existsSync(modelPath)) {
+      throw new Error(`${languageNames[language]} Piper voice model கிடைக்கவில்லை. models/piper folder-ல் model files-ஐச் சேர்க்கவும்`);
     }
 
     await new Promise<void>((resolve, reject) => {
       const child = spawn(config.piper.executablePath, [
-        "--model", config.piper.modelPath,
+        "--model", modelPath,
         "--output_file", outputPath,
-      ], { windowsHide: true, stdio: ["pipe", "ignore", "pipe"] });
+      ], {
+        windowsHide: true,
+        stdio: ["pipe", "ignore", "pipe"],
+        env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" },
+      });
       let errors = "";
       child.stderr.setEncoding("utf8");
       child.stderr.on("data", (chunk) => { errors += chunk; });

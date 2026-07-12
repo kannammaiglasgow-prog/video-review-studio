@@ -1,3 +1,5 @@
+import type { OutputLanguage } from "@/lib/config";
+
 export type TranscriptSegment = { startMs: number; durationMs: number; text: string };
 export type StockAsset = { provider: "pexels" | "pixabay"; kind?: "video" | "image"; id: string; url: string; previewUrl?: string; width: number; height: number; attribution?: string };
 
@@ -10,7 +12,7 @@ export interface ReviewProvider {
 }
 
 export interface SpeechProvider {
-  synthesize(text: string, outputPath: string, voice: string): Promise<void>;
+  synthesize(text: string, outputPath: string, voice: string, language?: OutputLanguage): Promise<void>;
 }
 
 export interface StockMediaProvider {

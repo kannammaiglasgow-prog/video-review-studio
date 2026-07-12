@@ -1,8 +1,8 @@
-import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { config } from "@/lib/config";
+import { probeAudioDuration } from "./ffprobe";
 
 export type RenderSpec = { aspectRatio: "9:16" | "16:9"; audioPath: string; clips: string[]; subtitlePath?: string; outputPath: string; targetDuration: number };
 
@@ -26,11 +26,6 @@ export async function runFfmpeg(args: string[]) {
   });
 }
 
-export function wavDuration(filePath: string) {
-  const size = fs.statSync(filePath).size;
-  return Math.max(1, (size - 44) / (24000 * 2));
-}
-
 function concatPath(filePath: string) {
   return filePath.replaceAll("\\", "/").replaceAll("'", "'\\''");
 }
@@ -41,7 +36,7 @@ export async function renderVideo(spec: RenderSpec) {
   const workDir = path.join(directory, "render-work");
   await fsp.mkdir(workDir, { recursive: true });
   const { width, height } = dimensions(spec.aspectRatio);
-  const audioDuration = wavDuration(spec.audioPath);
+  const audioDuration = await probeAudioDuration(spec.audioPath);
   const duration = spec.targetDuration;
   const sceneCount = requiredClipCount(duration);
   if (spec.clips.length < sceneCount) throw new Error(`${sceneCount} தனித்தனி clips தேவை; ${spec.clips.length} மட்டும் கிடைத்தது`);

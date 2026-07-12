@@ -7,7 +7,7 @@ const choices = {
   tone: ["இயல்பான", "நகைச்சுவை", "கிண்டல்", "உணர்ச்சிகரமான", "தீவிரமான", "ஊக்கமளிக்கும்"],
   persona: ["நண்பர்", "யூடியூபர்", "ஹீரோ", "வில்லன்", "சினிமா விவரிப்பாளர்", "செய்தி வாசிப்பாளர்"],
   voice: ["ஆண் — இயல்பான", "பெண் — இயல்பான", "ஆண் — ஆற்றலான", "பெண் — ஆற்றலான", "டிராமாட்டிக்"],
-  duration: ["15 விநாடிகள்", "30 விநாடிகள்", "60 விநாடிகள்", "2 நிமிடங்கள்", "5 நிமிடங்கள்", "8 நிமிடங்கள்", "10 நிமிடங்கள்"],
+  duration: ["15 விநாடிகள்", "30 விநாடிகள்", "60 விநாடிகள்", "2 நிமிடங்கள்", "5 நிமிடங்கள்", "8 நிமிடங்கள்", "10 நிமிடங்கள்", "ஆட்டோ — voice முடியும் வரை"],
 };
 
 type ChoiceKey = keyof typeof choices;
@@ -17,6 +17,13 @@ const sourceOptions = [
   { value: "youtube", label: "▶ YouTube வீடியோ" },
   { value: "news", label: "📰 News article" },
   { value: "text", label: "✍️ உரை paste" },
+  { value: "voiceover", label: "🎙️ Voice-over இருக்கு" },
+];
+
+const outputLanguageOptions = [
+  { value: "ta", label: "தமிழ்" },
+  { value: "en", label: "English" },
+  { value: "hi", label: "हिन्दी" },
 ];
 
 type StockResult = { provider: string; kind?: "video" | "image"; id: string; url: string; previewUrl?: string; width: number; height: number; attribution?: string };
@@ -39,7 +46,10 @@ function AssetPreview({ asset, className }: { asset: StockResult; className: str
 }
 
 export default function Home() {
-  const [form, setForm] = useState({ url: "", sourceType: "youtube", scriptMode: "rewrite", sourceText: "", startTime: "00:00", endTime: "01:00", ttsProvider: "local", format: "9:16", customInstruction: "", ...defaults });
+  const [form, setForm] = useState({ url: "", sourceType: "youtube", scriptMode: "as-is", sourceText: "", startTime: "00:00", endTime: "01:00", ttsProvider: "local", format: "9:16", customInstruction: "", outputLanguage: "ta", stockKeywords: "", allowGeminiKeywords: false, tier: "free", ...defaults });
+  const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [audioDurationSeconds, setAudioDurationSeconds] = useState<number | null>(null);
+  const audioFileInput = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState<"idle" | "saving" | "queued" | "error">("idle");
   const [message, setMessage] = useState("");
   const [projectId, setProjectId] = useState<number | null>(null);
@@ -69,8 +79,21 @@ export default function Home() {
   const thumbInput = useRef<HTMLInputElement>(null);
   const previewClass = useMemo(() => form.format === "9:16" ? "aspect-[9/16] max-h-[540px]" : "aspect-video", [form.format]);
   const set = (key: string, value: string) => setForm((current) => ({ ...current, [key]: value }));
+  const setTier = (tier: "free" | "premium") => setForm((current) => ({ ...current, tier, ttsProvider: tier === "free" ? "local" : current.ttsProvider, scriptMode: tier === "free" ? "as-is" : current.scriptMode, allowGeminiKeywords: tier === "free" ? false : current.allowGeminiKeywords }));
   const videoUrl = projectId ? `/api/projects/${projectId}/video${videoVersion ? `?v=${videoVersion}` : ""}` : "";
   const currentClip = editingClip !== null ? clips.find((clip) => clip.index === editingClip) : undefined;
+  const sceneCount = audioDurationSeconds ? Math.max(1, Math.ceil((audioDurationSeconds + 2) / 6)) : null;
+
+  function pickAudioFile(file: File) {
+    setAudioFile(file);
+    setAudioDurationSeconds(null);
+    const url = URL.createObjectURL(file);
+    const probe = document.createElement("audio");
+    probe.preload = "metadata";
+    probe.onloadedmetadata = () => { setAudioDurationSeconds(probe.duration); URL.revokeObjectURL(url); };
+    probe.onerror = () => URL.revokeObjectURL(url);
+    probe.src = url;
+  }
 
   const loadClips = useCallback(async (id: number) => {
     try {
@@ -119,11 +142,26 @@ export default function Home() {
   async function submit(event: FormEvent) {
     event.preventDefault(); setStatus("saving"); setMessage(""); setProjectId(null); setClips([]); setEditingClip(null); setPendingRender(false); setSuggestions([]); setYtResult(null); setYtTitle(""); setYtDescription("");
     try {
-      const response = await fetch("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
+      let response: Response;
+      if (form.sourceType === "voiceover") {
+        if (!audioFile) throw new Error("Voice-over audio file-ஐ upload செய்யவும்");
+        const body = new FormData();
+        body.append("sourceType", "voiceover");
+        body.append("sourceText", form.sourceText);
+        body.append("format", form.format);
+        body.append("outputLanguage", form.outputLanguage);
+        body.append("stockKeywords", form.stockKeywords);
+        body.append("allowGeminiKeywords", String(form.allowGeminiKeywords));
+        body.append("tier", form.tier);
+        body.append("audio", audioFile);
+        response = await fetch("/api/projects", { method: "POST", body });
+      } else {
+        response = await fetch("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
+      }
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "திட்டத்தை உருவாக்க முடியவில்லை");
-      const sourceNote = form.sourceType === "news" ? "News article படிக்கப்பட்டு" : form.sourceType === "text" ? "உரை எடுக்கப்பட்டு" : "Transcript எடுக்கப்பட்டு";
-      setStatus("queued"); setMessage(`திட்டம் #${result.id} உருவாக்கப்பட்டது. ${sourceNote} தமிழ் voice-over தயாராகிறது...`);
+      const sourceNote = form.sourceType === "news" ? "News article படிக்கப்பட்டு" : form.sourceType === "text" ? "உரை எடுக்கப்பட்டு" : form.sourceType === "voiceover" ? "Voice-over audio பயன்படுத்தப்பட்டு" : "Transcript எடுக்கப்பட்டு";
+      setStatus("queued"); setMessage(`திட்டம் #${result.id} உருவாக்கப்பட்டது. ${sourceNote} video தயாராகிறது...`);
       const processResponse = await fetch(`/api/projects/${result.id}/process`, { method: "POST" });
       const processed = await processResponse.json();
       if (!processResponse.ok) throw new Error(processed.error || "Processing தோல்வியடைந்தது");
@@ -243,22 +281,47 @@ export default function Home() {
     <div className="mx-auto grid max-w-[1500px] gap-7 px-5 py-8 lg:grid-cols-[minmax(0,1fr)_420px] lg:px-10">
       <form onSubmit={submit} className="space-y-6">
         <section><p className="eyebrow">புதிய உருவாக்கம்</p><h1 className="mt-2 text-3xl font-bold tracking-tight sm:text-4xl">ஒரு வீடியோவை தமிழ் review-ஆக மாற்றுங்கள்</h1><p className="mt-3 max-w-3xl text-slate-400">YouTube வீடியோ, news article அல்லது உங்கள் சொந்த உரை — எதிலிருந்தும் copyright-safe தமிழ் video உருவாக்குங்கள்.</p></section>
+        <section className="panel space-y-4">
+          <div className="step-title"><span>💰</span><div><h2>Free அல்லது Premium?</h2><p>Free-ல் Gemini API எதுவும் call ஆகாது — முழுவதும் local, $0.</p></div></div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <button type="button" onClick={() => setTier("free")} className={`format-card ${form.tier === "free" ? "format-active" : ""}`}><strong>🆓 Free</strong><small>Gemini API இல்லை · local script + Local Piper TTS · API கட்டணம் இல்லை</small></button>
+            <button type="button" onClick={() => setTier("premium")} className={`format-card ${form.tier === "premium" ? "format-active" : ""}`}><strong>💎 Premium</strong><small>Gemini AI script rewrite + Gemini TTS option · API கட்டணம் உண்டு</small></button>
+          </div>
+        </section>
         <section className="panel space-y-5"><div className="step-title"><span>1</span><div><h2>மூலத்தைத் தேர்ந்தெடுக்கவும்</h2><p>YouTube வீடியோ, news URL அல்லது உரை paste</p></div></div>
           <div className="flex flex-wrap gap-2">{sourceOptions.map((option) => <button key={option.value} type="button" onClick={() => set("sourceType", option.value)} className={`choice ${form.sourceType === option.value ? "choice-active" : ""}`}>{option.label}</button>)}</div>
-          {form.sourceType !== "text" && <label className="block"><span className="field-label">{form.sourceType === "news" ? "News URL" : "YouTube URL"}</span><div className="url-input"><span>{form.sourceType === "news" ? "📰" : "▶"}</span><input required type="url" placeholder={form.sourceType === "news" ? "https://www.bbc.com/news/..." : "https://youtube.com/watch?v=..."} value={form.url} onChange={(e) => set("url", e.target.value)} /></div></label>}
+          {form.sourceType !== "text" && form.sourceType !== "voiceover" && <label className="block"><span className="field-label">{form.sourceType === "news" ? "News URL" : "YouTube URL"}</span><div className="url-input"><span>{form.sourceType === "news" ? "📰" : "▶"}</span><input required type="url" placeholder={form.sourceType === "news" ? "https://www.bbc.com/news/..." : "https://youtube.com/watch?v=..."} value={form.url} onChange={(e) => set("url", e.target.value)} /></div></label>}
           {form.sourceType === "youtube" && <div className="grid gap-4 sm:grid-cols-2"><label><span className="field-label">தொடக்க நேரம்</span><input className="text-input" value={form.startTime} onChange={(e) => set("startTime", e.target.value)} placeholder="00:00" /></label><label><span className="field-label">முடிவு நேரம்</span><input className="text-input" value={form.endTime} onChange={(e) => set("endTime", e.target.value)} placeholder="01:00" /></label></div>}
-          {form.sourceType === "news" && <p className="text-xs text-slate-400">Article-ஐ AI படித்து, நீங்கள் தேர்ந்தெடுக்கும் நிலைப்பாட்டில் தமிழ் video உருவாக்கும். “நடுநிலை” என்றால் neutral செய்தி சுருக்கம்; மற்ற நிலைப்பாடுகள் கருத்து/review style.</p>}
+          {form.sourceType === "news" && <p className="text-xs text-slate-400">{form.tier === "free" ? "Free tier-ல் news article உரை அப்படியே voice-over-ஆக மாற்றப்படும் (AI rewrite இல்லை, Gemini call இல்லை)." : "Article-ஐ AI படித்து, நீங்கள் தேர்ந்தெடுக்கும் நிலைப்பாட்டில் தமிழ் video உருவாக்கும். “நடுநிலை” என்றால் neutral செய்தி சுருக்கம்; மற்ற நிலைப்பாடுகள் கருத்து/review style."}</p>}
+          {form.sourceType === "youtube" && form.tier === "free" && <p className="text-xs text-slate-400">Free tier-ல் YouTube transcript-ஐ அப்படியே voice-over-ஆக மாற்றும் (AI rewrite இல்லை, Gemini call இல்லை).</p>}
           {form.sourceType === "text" && <>
             <label className="block"><span className="field-label">உங்கள் உரை / voice-over script</span><textarea required className="text-input min-h-40 resize-y" placeholder="உங்கள் செய்தி, குறிப்பு அல்லது voice-over script-ஐ இங்கே paste செய்யவும்..." value={form.sourceText} onChange={(e) => set("sourceText", e.target.value)} /></label>
-            <div className="flex flex-wrap gap-2">
+            {form.tier === "premium" && <div className="flex flex-wrap gap-2">
               <button type="button" onClick={() => set("scriptMode", "rewrite")} className={`choice ${form.scriptMode === "rewrite" ? "choice-active" : ""}`}>🪄 AI மெருகூட்டட்டும்</button>
               <button type="button" onClick={() => set("scriptMode", "as-is")} className={`choice ${form.scriptMode === "as-is" ? "choice-active" : ""}`}>📖 அப்படியே வாசிக்கவும்</button>
-            </div>
-            <p className="text-xs text-slate-400">{form.scriptMode === "as-is" ? "நீங்கள் எழுதியதை மாற்றாமல் அப்படியே வாசிக்கும் — நிலைப்பாடு/tone script-ஐ பாதிக்காது." : "உங்கள் உரையை அடிப்படையாகக் கொண்டு, தேர்ந்தெடுத்த நிலைப்பாடு மற்றும் tone-ல் AI புதிய தமிழ் script எழுதும்."}</p>
+            </div>}
+            <p className="text-xs text-slate-400">{form.tier === "free" ? "Free tier-ல் script AI-ஆல் மாற்றப்படாது — நீங்கள் எழுதியதே அப்படியே voice-over ஆகும் (Gemini call இல்லை)." : form.scriptMode === "as-is" ? "நீங்கள் எழுதியதை மாற்றாமல் அப்படியே வாசிக்கும் — நிலைப்பாடு/tone script-ஐ பாதிக்காது." : "உங்கள் உரையை அடிப்படையாகக் கொண்டு, தேர்ந்தெடுத்த நிலைப்பாடு மற்றும் tone-ல் AI புதிய தமிழ் script எழுதும்."}</p>
+          </>}
+          {form.tier === "free" && form.sourceType !== "voiceover" && <label className="block"><span className="field-label">English stock keywords (விருப்பம்)</span><input className="text-input" placeholder="உதா: city traffic, temple, nature — comma-ஆல் பிரிக்கவும்" value={form.stockKeywords} onChange={(e) => set("stockKeywords", e.target.value)} /></label>}
+          {form.sourceType === "voiceover" && <>
+            <label className="block"><span className="field-label">Voice-over audio file</span><div className="flex flex-wrap items-center gap-2"><button type="button" className="choice" onClick={() => audioFileInput.current?.click()}>{audioFile ? "🔁 வேறு file தேர்வு செய்" : "⬆️ Audio file upload"}</button>{audioFile && <span className="text-xs text-slate-400">{audioFile.name} {audioDurationSeconds !== null && `· ${audioDurationSeconds.toFixed(1)}s`}</span>}</div><input ref={audioFileInput} type="file" accept="audio/*,.wav,.mp3,.m4a,.ogg,.flac" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) pickAudioFile(file); e.target.value = ""; }} /></label>
+            <label className="block"><span className="field-label">இந்த audio-வின் சரியான script (word-to-word)</span><textarea required className="text-input min-h-40 resize-y" placeholder="Audio-வில் பேசப்படும் script-ஐ சரியாக இங்கே paste செய்யவும்..." value={form.sourceText} onChange={(e) => set("sourceText", e.target.value)} /></label>
+            <label className="block"><span className="field-label">English stock keywords (விருப்பம்)</span><input className="text-input" placeholder="உதா: city traffic, temple, nature — comma-ஆல் பிரிக்கவும்" value={form.stockKeywords} onChange={(e) => set("stockKeywords", e.target.value)} /></label>
+            {form.tier === "premium" && <label className="flex items-center gap-2 text-sm text-slate-300"><input type="checkbox" checked={form.allowGeminiKeywords} onChange={(e) => setForm((current) => ({ ...current, allowGeminiKeywords: e.target.checked }))} /> Improve stock search using Gemini <span className="text-xs text-amber-300/80">(API கட்டணம் உண்டு — default OFF)</span></label>}
+            {sceneCount !== null && <p className="text-xs text-emerald-300/80">≈ {sceneCount} unique 6-second scenes இந்த audio-க்கு தேவைப்படும்.</p>}
+            <p className="text-xs text-slate-400">இந்த மோட்-ல் Gemini script/TTS எதுவும் call ஆகாது — உங்கள் audio + script-ஐயே நேரடியாக video-ஆக render செய்யும்.</p>
           </>}
         </section>
-        <section className="panel space-y-7"><div className="step-title"><span>2</span><div><h2>Review பாணியை வடிவமைக்கவும்</h2><p>AI எழுத வேண்டிய நிலைப்பாடு மற்றும் உணர்வு</p></div></div><ChoiceGroup label="நிலைப்பாடு" name="stance" value={form.stance} onChange={(v) => set("stance", v)} /><ChoiceGroup label="Tone" name="tone" value={form.tone} onChange={(v) => set("tone", v)} /><ChoiceGroup label="கதாபாத்திர பாணி" name="persona" value={form.persona} onChange={(v) => set("persona", v)} /><label className="block"><span className="field-label">கூடுதல் வழிமுறை (விருப்பம்)</span><textarea className="text-input min-h-24 resize-y" placeholder="உதாரணம்: தொடக்கத்தில் வலுவான hook சேர்க்கவும்..." value={form.customInstruction} onChange={(e) => set("customInstruction", e.target.value)} /></label></section>
-        <section className="panel space-y-7"><div className="step-title"><span>3</span><div><h2>குரல் மற்றும் output</h2><p>Final video எப்படி இருக்க வேண்டும்?</p></div></div><div className="space-y-3"><p className="text-sm font-semibold text-slate-200">TTS முறை</p><div className="grid gap-3 sm:grid-cols-2"><button type="button" onClick={() => set("ttsProvider", "local")} className={`format-card ${form.ttsProvider === "local" ? "format-active" : ""}`}><strong>Local Piper — இலவசம்</strong><small>API செலவு இல்லை · Tamil பெண் குரல்</small></button><button type="button" onClick={() => set("ttsProvider", "gemini")} className={`format-card ${form.ttsProvider === "gemini" ? "format-active" : ""}`}><strong>Gemini TTS</strong><small>மேம்பட்ட குரல் · API கட்டணம் உண்டு</small></button></div></div>{form.ttsProvider === "gemini" ? <ChoiceGroup label="தமிழ் குரல்" name="voice" value={form.voice} onChange={(v) => set("voice", v)} /> : <p className="text-xs text-emerald-300/80">Local Piper தற்போது Rasa Tamil பெண் குரலைப் பயன்படுத்தும்.</p>}<div className="space-y-3"><p className="text-sm font-semibold text-slate-200">Video வடிவம்</p><div className="grid gap-3 sm:grid-cols-2"><button type="button" onClick={() => set("format", "9:16")} className={`format-card ${form.format === "9:16" ? "format-active" : ""}`}><span className="portrait-icon"/><strong>Shorts / Reels</strong><small>9:16 · 1080 × 1920</small></button><button type="button" onClick={() => set("format", "16:9")} className={`format-card ${form.format === "16:9" ? "format-active" : ""}`}><span className="landscape-icon"/><strong>Normal video</strong><small>16:9 · 1920 × 1080</small></button></div></div><ChoiceGroup label="கால அளவு" name="duration" value={form.duration} onChange={(v) => set("duration", v)} /><p className="text-xs text-slate-400">குறிப்பு: voice-over சற்று நீளமானால் video-வும் voice முடியும் வரை நீளும் — பேச்சு நடுவில் வெட்டப்படாது.</p></section>
+        {form.sourceType !== "voiceover" && form.tier === "premium" && <section className="panel space-y-7"><div className="step-title"><span>2</span><div><h2>Review பாணியை வடிவமைக்கவும்</h2><p>AI எழுத வேண்டிய நிலைப்பாடு மற்றும் உணர்வு</p></div></div><ChoiceGroup label="நிலைப்பாடு" name="stance" value={form.stance} onChange={(v) => set("stance", v)} /><ChoiceGroup label="Tone" name="tone" value={form.tone} onChange={(v) => set("tone", v)} /><ChoiceGroup label="கதாபாத்திர பாணி" name="persona" value={form.persona} onChange={(v) => set("persona", v)} /><label className="block"><span className="field-label">கூடுதல் வழிமுறை (விருப்பம்)</span><textarea className="text-input min-h-24 resize-y" placeholder="உதாரணம்: தொடக்கத்தில் வலுவான hook சேர்க்கவும்..." value={form.customInstruction} onChange={(e) => set("customInstruction", e.target.value)} /></label></section>}
+        <section className="panel space-y-7"><div className="step-title"><span>{form.sourceType === "voiceover" || form.tier === "free" ? 2 : 3}</span><div><h2>குரல் மற்றும் output</h2><p>Final video எப்படி இருக்க வேண்டும்?</p></div></div>
+          <div className="space-y-3"><p className="text-sm font-semibold text-slate-200">{form.sourceType === "voiceover" ? "Script மொழி (keyword extraction-க்கு)" : "Output மொழி"}</p><div className="flex flex-wrap gap-2">{outputLanguageOptions.map((option) => <button key={option.value} type="button" onClick={() => set("outputLanguage", option.value)} className={`choice ${form.outputLanguage === option.value ? "choice-active" : ""}`}>{option.label}</button>)}</div></div>
+          {form.sourceType !== "voiceover" && form.tier === "premium" && <div className="space-y-3"><p className="text-sm font-semibold text-slate-200">TTS முறை</p><div className="grid gap-3 sm:grid-cols-2"><button type="button" onClick={() => set("ttsProvider", "local")} className={`format-card ${form.ttsProvider === "local" ? "format-active" : ""}`}><strong>Local Piper — இலவசம்</strong><small>API செலவு இல்லை · {outputLanguageOptions.find((o) => o.value === form.outputLanguage)?.label} குரல்</small></button><button type="button" onClick={() => set("ttsProvider", "gemini")} className={`format-card ${form.ttsProvider === "gemini" ? "format-active" : ""}`}><strong>Gemini TTS</strong><small>மேம்பட்ட குரல் · API கட்டணம் உண்டு</small></button></div></div>}
+          {form.sourceType !== "voiceover" && form.tier === "free" && <p className="text-xs text-emerald-300/80">Free tier — Local Piper TTS ({outputLanguageOptions.find((o) => o.value === form.outputLanguage)?.label}) மட்டும், API கட்டணம் இல்லை.</p>}
+          {form.sourceType !== "voiceover" && form.tier === "premium" && (form.ttsProvider === "gemini" ? <ChoiceGroup label="குரல்" name="voice" value={form.voice} onChange={(v) => set("voice", v)} /> : <p className="text-xs text-emerald-300/80">Local Piper தற்போது {outputLanguageOptions.find((o) => o.value === form.outputLanguage)?.label} fixed voice-ஐப் பயன்படுத்தும்.</p>)}
+          <div className="space-y-3"><p className="text-sm font-semibold text-slate-200">Video வடிவம்</p><div className="grid gap-3 sm:grid-cols-2"><button type="button" onClick={() => set("format", "9:16")} className={`format-card ${form.format === "9:16" ? "format-active" : ""}`}><span className="portrait-icon"/><strong>Shorts / Reels</strong><small>9:16 · 1080 × 1920</small></button><button type="button" onClick={() => set("format", "16:9")} className={`format-card ${form.format === "16:9" ? "format-active" : ""}`}><span className="landscape-icon"/><strong>Normal video</strong><small>16:9 · 1920 × 1080</small></button></div></div>
+          {form.sourceType === "voiceover" ? <p className="text-xs text-slate-400">கால அளவு: Auto — உங்கள் audio-வின் நீளத்தை பொறுத்து (+2s tail).</p> : <ChoiceGroup label="கால அளவு" name="duration" value={form.duration} onChange={(v) => set("duration", v)} />}
+          <p className="text-xs text-slate-400">குறிப்பு: voice-over சற்று நீளமானால் video-வும் voice முடியும் வரை நீளும் — பேச்சு நடுவில் வெட்டப்படாது.</p>
+        </section>
         <button disabled={status === "saving"} className="generate-button" type="submit"><span>{status === "saving" ? "தயாராகிறது..." : "Review video உருவாக்கு"}</span><b>→</b></button>{message && <div className={`status ${status === "error" ? "status-error" : ""}`}>{message}</div>}
         {projectId !== null && <section className="panel space-y-4"><div className="step-title"><span>✓</span><div><h2>உங்கள் review video தயாராகிவிட்டது</h2><p>Preview செய்து MP4 file-ஐ சேமிக்கலாம்</p></div></div><video key={videoUrl} className="mx-auto max-h-[620px] w-full rounded-xl bg-black" src={videoUrl} controls playsInline /><a className="generate-button" href={`/api/projects/${projectId}/video?download=1`} download><span>MP4 video சேமிக்கவும்</span><b>↓</b></a>
           <div className="space-y-4 rounded-xl border border-red-400/20 bg-red-400/[.05] p-4">
@@ -295,7 +358,7 @@ export default function Home() {
           {pendingRender && <button type="button" onClick={rerender} disabled={rerendering} className="generate-button"><span>{rerendering ? "Render ஆகிறது..." : "புதிய clips-உடன் மீண்டும் render"}</span><b>⟳</b></button>}
         </section>}
       </form>
-      <aside className="lg:sticky lg:top-6 lg:self-start"><div className="panel overflow-hidden p-0"><div className="flex items-center justify-between border-b border-white/10 px-5 py-4"><div><h2 className="font-semibold">Live preview</h2><p className="text-xs text-slate-500">{form.format} · {form.duration}</p></div><span className="rounded-full bg-white/5 px-3 py-1 text-xs text-slate-400">Draft</span></div><div className="preview-wrap"><div className={`preview ${previewClass}`}><div className="preview-glow"/><div className="preview-content"><span className="preview-badge">{form.stance}</span><div><p className="text-[10px] uppercase tracking-[.25em] text-white/60">தமிழ் வீடியோ review</p><h3 className="mt-2 text-xl font-black leading-tight">உங்கள் கதையை<br/>உங்கள் பாணியில் சொல்லுங்கள்</h3><p className="mt-3 text-xs text-white/65">{form.tone} · {form.persona}</p></div><div className="subtitle-demo">தமிழ் subtitles இங்கே தோன்றும்</div></div></div></div><div className="grid grid-cols-3 divide-x divide-white/10 border-t border-white/10 text-center"><div className="p-4"><b className="block">{form.format}</b><small>வடிவம்</small></div><div className="p-4"><b className="block">{form.duration}</b><small>நீளம்</small></div><div className="p-4"><b className="block">தமிழ்</b><small>Output</small></div></div></div><div className="mt-4 rounded-2xl border border-amber-300/15 bg-amber-300/[.06] p-4 text-sm leading-6 text-amber-100/70"><strong className="text-amber-200">குறிப்பு:</strong> Clip-ஐ click செய்து videos/images தேடி மாற்றலாம்; சொந்த image-ஐயும் upload செய்யலாம் — static image தானாக மெதுவாக zoom ஆகும்.</div></aside>
+      <aside className="lg:sticky lg:top-6 lg:self-start"><div className="panel overflow-hidden p-0"><div className="flex items-center justify-between border-b border-white/10 px-5 py-4"><div><h2 className="font-semibold">Live preview</h2><p className="text-xs text-slate-500">{form.format} · {form.sourceType === "voiceover" ? (audioDurationSeconds !== null ? `${Math.round(audioDurationSeconds)}s` : "Auto") : form.duration}</p></div><span className={`rounded-full px-3 py-1 text-xs ${form.tier === "free" ? "bg-emerald-400/10 text-emerald-300" : "bg-amber-400/10 text-amber-300"}`}>{form.tier === "free" ? "🆓 Free" : "💎 Premium"}</span></div><div className="preview-wrap"><div className={`preview ${previewClass}`}><div className="preview-glow"/><div className="preview-content"><span className="preview-badge">{form.sourceType === "voiceover" ? "Voice-over" : form.stance}</span><div><p className="text-[10px] uppercase tracking-[.25em] text-white/60">{outputLanguageOptions.find((o) => o.value === form.outputLanguage)?.label} வீடியோ review</p><h3 className="mt-2 text-xl font-black leading-tight">உங்கள் கதையை<br/>உங்கள் பாணியில் சொல்லுங்கள்</h3><p className="mt-3 text-xs text-white/65">{form.sourceType === "voiceover" ? "உங்கள் voice-over" : `${form.tone} · ${form.persona}`}</p></div><div className="subtitle-demo">Subtitles இங்கே தோன்றும்</div></div></div></div><div className="grid grid-cols-3 divide-x divide-white/10 border-t border-white/10 text-center"><div className="p-4"><b className="block">{form.format}</b><small>வடிவம்</small></div><div className="p-4"><b className="block">{form.sourceType === "voiceover" ? (audioDurationSeconds !== null ? `${Math.round(audioDurationSeconds)}s` : "Auto") : form.duration}</b><small>நீளம்</small></div><div className="p-4"><b className="block">{outputLanguageOptions.find((o) => o.value === form.outputLanguage)?.label}</b><small>Output</small></div></div></div><div className="mt-4 rounded-2xl border border-amber-300/15 bg-amber-300/[.06] p-4 text-sm leading-6 text-amber-100/70"><strong className="text-amber-200">குறிப்பு:</strong> Clip-ஐ click செய்து videos/images தேடி மாற்றலாம்; சொந்த image-ஐயும் upload செய்யலாம் — static image தானாக மெதுவாக zoom ஆகும்.</div></aside>
     </div>
 
     {editingClip !== null && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm" onClick={closeClipEditor}>

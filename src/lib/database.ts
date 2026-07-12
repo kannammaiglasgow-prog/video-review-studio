@@ -56,6 +56,11 @@ function migrate(db: DatabaseSync) {
   db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (3, 'add_script_mode')");
   if (!hasColumn("tts_provider")) db.exec("ALTER TABLE projects ADD COLUMN tts_provider TEXT NOT NULL DEFAULT 'local'");
   db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (4, 'add_tts_provider')");
+  if (!hasColumn("stock_keywords")) db.exec("ALTER TABLE projects ADD COLUMN stock_keywords TEXT");
+  if (!hasColumn("allow_gemini_keywords")) db.exec("ALTER TABLE projects ADD COLUMN allow_gemini_keywords INTEGER NOT NULL DEFAULT 0");
+  db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (5, 'add_voiceover_mode')");
+  if (!hasColumn("tier")) db.exec("ALTER TABLE projects ADD COLUMN tier TEXT NOT NULL DEFAULT 'premium'");
+  db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (6, 'add_tier')");
 }
 
 export function database() {

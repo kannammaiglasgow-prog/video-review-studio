@@ -18,6 +18,7 @@ fs.mkdirSync(path.dirname(output), { recursive: true });
 const child = spawn(executable, ["--model", model, "--output_file", output], {
   windowsHide: true,
   stdio: ["pipe", "inherit", "inherit"],
+  env: { ...process.env, PYTHONUTF8: "1", PYTHONIOENCODING: "utf-8" },
 });
 child.stdin.end("வணக்கம். இது ரிவ்யூ ஸ்டுடியோவின் இலவச தமிழ் குரல் சோதனை.", "utf8");
 child.on("error", (error) => { console.error(error.message); process.exit(1); });
