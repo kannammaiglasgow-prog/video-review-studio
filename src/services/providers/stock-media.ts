@@ -2,27 +2,32 @@ import { config } from "@/lib/config";
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { StockAsset, StockMediaProvider } from "./types";
+import { detectImageType, imageExtension } from "@/lib/images";
 
 export const pexelsProvider: StockMediaProvider = {
-  async search(query, orientation) {
+  async search(query, orientation, limit = 8) {
     if (!config.api.pexels) return [];
     const url = new URL("https://api.pexels.com/videos/search");
-    url.searchParams.set("query", query); url.searchParams.set("orientation", orientation); url.searchParams.set("per_page", "8");
+    url.searchParams.set("query", query); url.searchParams.set("orientation", orientation); url.searchParams.set("per_page", String(Math.min(80, Math.max(1, limit))));
     const response = await fetch(url, { headers: { Authorization: config.api.pexels } });
     if (!response.ok) throw new Error(`Pexels API ${response.status}`);
     const data = await response.json();
     return (data.videos || []).flatMap((video: { id: number; width: number; height: number; user?: { name?: string }; video_files?: { link: string; width: number; height: number; file_type?: string }[] }) => {
-      const file = video.video_files?.filter((item) => item.file_type === "video/mp4").sort((a, b) => b.width - a.width)[0];
+      const file = video.video_files?.filter((item) => item.file_type === "video/mp4").sort((a, b) => {
+        const aLargest = Math.max(a.width, a.height); const bLargest = Math.max(b.width, b.height);
+        const aOversized = aLargest > 1920 ? 1 : 0; const bOversized = bLargest > 1920 ? 1 : 0;
+        return aOversized - bOversized || (b.width * b.height) - (a.width * a.height);
+      })[0];
       return file ? [{ provider: "pexels", id: String(video.id), url: file.link, width: file.width, height: file.height, attribution: video.user?.name }] : [];
     }) as StockAsset[];
   },
 };
 
 export const pixabayProvider: StockMediaProvider = {
-  async search(query, orientation) {
+  async search(query, orientation, limit = 8) {
     if (!config.api.pixabay) return [];
     const url = new URL("https://pixabay.com/api/videos/");
-    url.searchParams.set("key", config.api.pixabay); url.searchParams.set("q", query); url.searchParams.set("per_page", "8");
+    url.searchParams.set("key", config.api.pixabay); url.searchParams.set("q", query); url.searchParams.set("per_page", String(Math.min(200, Math.max(3, limit))));
     const response = await fetch(url);
     if (!response.ok) throw new Error(`Pixabay API ${response.status}`);
     const data = await response.json();
@@ -34,11 +39,11 @@ export const pixabayProvider: StockMediaProvider = {
   },
 };
 
-export async function searchStockImages(query: string, orientation: "portrait" | "landscape") {
+export async function searchStockImages(query: string, orientation: "portrait" | "landscape", limit = 8) {
   const assets: StockAsset[] = [];
   if (config.api.pexels) {
     const url = new URL("https://api.pexels.com/v1/search");
-    url.searchParams.set("query", query); url.searchParams.set("orientation", orientation); url.searchParams.set("per_page", "8");
+    url.searchParams.set("query", query); url.searchParams.set("orientation", orientation); url.searchParams.set("per_page", String(Math.min(80, Math.max(1, limit))));
     const response = await fetch(url, { headers: { Authorization: config.api.pexels } });
     if (response.ok) {
       const data = await response.json();
@@ -50,7 +55,7 @@ export async function searchStockImages(query: string, orientation: "portrait" |
   }
   if (config.api.pixabay) {
     const url = new URL("https://pixabay.com/api/");
-    url.searchParams.set("key", config.api.pixabay); url.searchParams.set("q", query); url.searchParams.set("per_page", "8");
+    url.searchParams.set("key", config.api.pixabay); url.searchParams.set("q", query); url.searchParams.set("per_page", String(Math.min(200, Math.max(3, limit))));
     url.searchParams.set("image_type", "photo"); url.searchParams.set("orientation", orientation === "portrait" ? "vertical" : "horizontal");
     const response = await fetch(url);
     if (response.ok) {
@@ -63,25 +68,68 @@ export async function searchStockImages(query: string, orientation: "portrait" |
   return assets;
 }
 
-export async function searchStockMedia(terms: string[], orientation: "portrait" | "landscape") {
-  const assets: StockAsset[] = [];
-  for (const term of terms.slice(0, 5)) {
-    const pexels = await pexelsProvider.search(term, orientation);
-    assets.push(...pexels.slice(0, 2));
-    if (pexels.length < 2) assets.push(...(await pixabayProvider.search(term, orientation)).slice(0, 2 - pexels.length));
+export async function searchStockMedia(terms: string[], orientation: "portrait" | "landscape", desiredCount = 6) {
+  const searchTerms = [...new Set(terms.map((term) => term.trim()).filter(Boolean))].slice(0, 10);
+  if (!searchTerms.length) searchTerms.push("people lifestyle", "city", "technology", "nature", "abstract background");
+  const unique = new Map<string, StockAsset>();
+  const perTerm = Math.min(80, Math.max(8, Math.ceil(desiredCount / searchTerms.length) + 4));
+  const add = (asset: StockAsset) => unique.set(`${asset.provider}:video:${asset.id}`, { ...asset, kind: "video" });
+
+  for (const term of searchTerms) {
+    const [pexels, pixabay] = await Promise.all([
+      pexelsProvider.search(term, orientation, perTerm).catch(() => []),
+      pixabayProvider.search(term, orientation, perTerm).catch(() => []),
+    ]);
+    const maximum = Math.max(pexels.length, pixabay.length);
+    for (let index = 0; index < maximum; index += 1) {
+      if (pexels[index]) add(pexels[index]);
+      if (pixabay[index]) add(pixabay[index]);
+      if (unique.size >= desiredCount) return [...unique.values()];
+    }
   }
-  return assets;
+
+  for (const term of searchTerms) {
+    const images = await searchStockImages(term, orientation, perTerm).catch(() => []);
+    for (const image of images) {
+      unique.set(`${image.provider}:image:${image.id}`, image);
+      if (unique.size >= desiredCount) return [...unique.values()];
+    }
+  }
+  return [...unique.values()];
 }
 
-export async function downloadStockMedia(assets: StockAsset[], directory: string) {
+export async function downloadStockMedia(assets: StockAsset[], directory: string, desiredCount = assets.length) {
   await fs.mkdir(directory, { recursive: true });
+  const staging = path.join(directory, `.download-${Date.now()}`);
+  await fs.mkdir(staging, { recursive: true });
   const files: string[] = [];
   for (let index = 0; index < assets.length; index += 1) {
-    const response = await fetch(assets[index].url);
-    if (!response.ok) continue;
-    const filePath = path.join(directory, `stock-${index}.mp4`);
-    await fs.writeFile(filePath, Buffer.from(await response.arrayBuffer()));
-    files.push(filePath);
+    if (files.length >= desiredCount) break;
+    try {
+      const response = await fetch(assets[index].url, { signal: AbortSignal.timeout(120_000) });
+      if (!response.ok) continue;
+      const data = Buffer.from(await response.arrayBuffer());
+      const detectedImage = assets[index].kind === "image" ? detectImageType(data) : null;
+      if (assets[index].kind === "image" && !detectedImage) continue;
+      const extension = detectedImage ? imageExtension(detectedImage) : ".mp4";
+      const filePath = path.join(staging, `stock-${files.length}${extension}`);
+      await fs.writeFile(filePath, data);
+      files.push(filePath);
+    } catch { continue; }
   }
-  return files;
+  if (files.length < desiredCount) {
+    await fs.rm(staging, { recursive: true, force: true });
+    return [];
+  }
+  for (const file of await fs.readdir(directory)) {
+    if (/^stock-\d+\.(mp4|jpe?g|png|webp)$/i.test(file)) await fs.rm(path.join(directory, file), { force: true });
+  }
+  const finalFiles: string[] = [];
+  for (const stagedFile of files) {
+    const output = path.join(directory, path.basename(stagedFile));
+    await fs.rename(stagedFile, output);
+    finalFiles.push(output);
+  }
+  await fs.rm(staging, { recursive: true, force: true });
+  return finalFiles;
 }

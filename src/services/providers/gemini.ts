@@ -43,26 +43,88 @@ async function requestWithFallback(models: string[], body: unknown) {
   throw lastError instanceof Error ? lastError : new Error("Gemini சேவை தற்போது கிடைக்கவில்லை");
 }
 
-export const geminiReviewProvider: ReviewProvider = {
-  async createTamilScript(prompt) {
-    const data = await requestWithFallback(["gemini-3.5-flash", "gemini-2.5-flash"], {
-      contents: [{ parts: [{ text: `${prompt}\n\nJSON மட்டும் பதிலளிக்கவும்: {"title":"...","script":"...","searchTerms":["English keyword"]}` }] }],
-      generationConfig: { responseMimeType: "application/json", temperature: 0.8 },
+// Gemini சில நேரம் escape ஆகாத newlines/quotes உடன் invalid JSON அனுப்பும் — படிப்படியாக repair செய்யும்
+function escapeControlCharsInStrings(text: string) {
+  let output = "";
+  let inString = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (inString && (char === "\n" || char === "\r" || char === "\t")) {
+      output += char === "\n" ? "\\n" : char === "\r" ? "\\r" : "\\t";
+      continue;
+    }
+    if (char === '"') {
+      let backslashes = 0;
+      for (let cursor = index - 1; cursor >= 0 && text[cursor] === "\\"; cursor -= 1) backslashes += 1;
+      if (backslashes % 2 === 0) inString = !inString;
+    }
+    output += char;
+  }
+  return output;
+}
+
+export function parseGeminiJson<T>(raw: string): T {
+  let text = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  const start = text.indexOf("{");
+  if (start >= 0) {
+    let depth = 0;
+    let inString = false;
+    let end = -1;
+    for (let index = start; index < text.length; index += 1) {
+      const char = text[index];
+      if (char === '"') {
+        let backslashes = 0;
+        for (let cursor = index - 1; cursor >= start && text[cursor] === "\\"; cursor -= 1) backslashes += 1;
+        if (backslashes % 2 === 0) inString = !inString;
+      }
+      if (inString) continue;
+      if (char === "{") depth += 1;
+      if (char === "}") {
+        depth -= 1;
+        if (depth === 0) { end = index; break; }
+      }
+    }
+    if (end > start) text = text.slice(start, end + 1);
+  }
+  const attempts = [text, text.replace(/,\s*([}\]])/g, "$1"), escapeControlCharsInStrings(text), escapeControlCharsInStrings(text.replace(/,\s*([}\]])/g, "$1"))];
+  let lastError: unknown;
+  for (const attempt of attempts) {
+    try { return JSON.parse(attempt) as T; } catch (error) { lastError = error; }
+  }
+  throw lastError instanceof Error ? lastError : new Error("Gemini JSON parse தோல்வி");
+}
+
+async function requestJson<T>(models: string[], prompt: string, temperature: number): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const data = await requestWithFallback(models, {
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { responseMimeType: "application/json", temperature: attempt === 0 ? temperature : 0.3 },
     });
     const text = data?.candidates?.[0]?.content?.parts?.map((part: { text?: string }) => part.text || "").join("");
-    if (!text) throw new Error("Gemini review script திருப்பவில்லை");
-    return JSON.parse(text);
+    if (!text) { lastError = new Error("Gemini பதில் காலியாக உள்ளது"); continue; }
+    try { return parseGeminiJson<T>(text); } catch (error) { lastError = error; }
+  }
+  throw new Error(`Gemini சரியான JSON திருப்பவில்லை — மீண்டும் முயற்சிக்கவும் (${lastError instanceof Error ? lastError.message : "parse error"})`);
+}
+
+export const geminiReviewProvider: ReviewProvider = {
+  async createTamilScript(prompt) {
+    const result = await requestJson<{ title?: unknown; script?: unknown; searchTerms?: unknown }>(["gemini-3.5-flash", "gemini-2.5-flash"], `${prompt}\n\nJSON மட்டும் பதிலளிக்கவும் (strings-க்குள் newlines-ஐ \\n ஆக escape செய்யவும்): {"title":"...","script":"...","searchTerms":["English keyword"]}`, 0.8);
+    const title = typeof result.title === "string" ? result.title.trim() : "";
+    const script = typeof result.script === "string" ? result.script.trim() : "";
+    const searchTerms = Array.isArray(result.searchTerms) ? result.searchTerms.filter((term): term is string => typeof term === "string" && term.trim().length > 0).map((term) => term.trim()).slice(0, 10) : [];
+    if (!title || !script) throw new Error("Gemini பதிலில் title அல்லது script இல்லை");
+    return { title, script, searchTerms };
   },
 };
 
 export async function createVideoMetadata(script: string): Promise<{ title: string; searchTerms: string[] }> {
-  const data = await requestWithFallback(["gemini-3.5-flash", "gemini-2.5-flash"], {
-    contents: [{ parts: [{ text: `கீழே உள்ள தமிழ் voice-over script-க்கு பொருத்தமான தலைப்பும், stock video தேட 5 English keywords-உம் மட்டும் கொடுக்கவும். Script-ஐ மாற்ற வேண்டாம்.\n\nScript:\n${script}\n\nJSON மட்டும் பதிலளிக்கவும்: {"title":"...","searchTerms":["English keyword"]}` }] }],
-    generationConfig: { responseMimeType: "application/json", temperature: 0.4 },
-  });
-  const text = data?.candidates?.[0]?.content?.parts?.map((part: { text?: string }) => part.text || "").join("");
-  if (!text) throw new Error("Gemini metadata திருப்பவில்லை");
-  return JSON.parse(text);
+  const result = await requestJson<{ title?: unknown; searchTerms?: unknown }>(["gemini-3.5-flash", "gemini-2.5-flash"], `கீழே உள்ள தமிழ் voice-over script-க்கு பொருத்தமான தலைப்பும், stock video தேட 5 English keywords-உம் மட்டும் கொடுக்கவும். Script-ஐ மாற்ற வேண்டாம்.\n\nScript:\n${script}\n\nJSON மட்டும் பதிலளிக்கவும்: {"title":"...","searchTerms":["English keyword"]}`, 0.4);
+  const title = typeof result.title === "string" ? result.title.trim() : "";
+  const searchTerms = Array.isArray(result.searchTerms) ? result.searchTerms.filter((term): term is string => typeof term === "string" && term.trim().length > 0).map((term) => term.trim()).slice(0, 10) : [];
+  if (!title) throw new Error("Gemini metadata-ல் title இல்லை");
+  return { title, searchTerms };
 }
 
 function pcmToWav(pcm: Buffer, sampleRate = 24000) {

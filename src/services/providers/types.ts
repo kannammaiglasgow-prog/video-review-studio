@@ -14,5 +14,5 @@ export interface SpeechProvider {
 }
 
 export interface StockMediaProvider {
-  search(query: string, orientation: "portrait" | "landscape"): Promise<StockAsset[]>;
+  search(query: string, orientation: "portrait" | "landscape", limit?: number): Promise<StockAsset[]>;
 }

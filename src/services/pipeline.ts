@@ -5,8 +5,9 @@ import { config } from "@/lib/config";
 import { createVideoMetadata, geminiReviewProvider, geminiSpeechProvider } from "./providers/gemini";
 import { downloadStockMedia, searchStockMedia } from "./providers/stock-media";
 import { fetchNewsArticle } from "./providers/news";
+import { piperSpeechProvider } from "./providers/piper";
 import { selectTranscriptSegment, youtubeTranscriptProvider } from "./providers/transcript";
-import { renderVideo, wavDuration } from "./render/ffmpeg";
+import { renderVideo, requiredClipCount, wavDuration } from "./render/ffmpeg";
 
 export const PIPELINE_STAGES = ["transcript", "analysis", "script", "tts", "stock-media", "render", "complete"] as const;
 export type PipelineStage = (typeof PIPELINE_STAGES)[number];
@@ -18,6 +19,10 @@ export type ReviewBrief = {
 
 // Voice-over முடிந்த பிறகே video முடிய வேண்டும் — requested duration-ல் voice-ஐ வெட்டக்கூடாது
 const AUDIO_TAIL_SECONDS = 2;
+
+function finalRenderDuration(requestedDuration: string, audioPath: string) {
+  return Math.max(durationToSeconds(requestedDuration), wavDuration(audioPath) + AUDIO_TAIL_SECONDS);
+}
 
 export function durationToSeconds(duration: string) {
   const durations: Record<string, number> = { "15 விநாடிகள்": 15, "30 விநாடிகள்": 30, "60 விநாடிகள்": 60, "2 நிமிடங்கள்": 120, "5 நிமிடங்கள்": 300, "8 நிமிடங்கள்": 480, "10 நிமிடங்கள்": 600 };
@@ -38,7 +43,7 @@ export function buildTamilReviewPrompt(brief: ReviewBrief) {
   return `${intro}\nநிலைப்பாடு: ${brief.stance}\nTone: ${brief.tone}\nபாத்திரம்: ${brief.persona}\nகால அளவு: ${brief.duration} (${seconds} விநாடிகள்)\nமிக முக்கியம்: script ${minimumWords} முதல் ${maximumWords} தமிழ் சொற்கள் வரை கட்டாயம் இருக்க வேண்டும். தலைப்பு அல்லது இயக்குநர் குறிப்புகளை script-ல் சேர்க்க வேண்டாம். வாசித்தால் ${seconds} விநாடிகளுக்கு இயல்பாகப் பொருந்த வேண்டும்.${isNews ? "\nசெய்தியில் உள்ள உண்மைகளை மாற்றாமல் சொல்லவும்; நிலைப்பாடு நடுநிலை என்றால் கருத்து சேர்க்காமல் செய்தி சுருக்கமாக மட்டும் சொல்லவும்." : ""}\nகூடுதல் வழிமுறை: ${brief.customInstruction || "இல்லை"}\n${sourceLabel}:\n${brief.transcript}`;
 }
 
-type ProjectRow = { id: number; youtube_url: string; source_type: "youtube" | "news" | "text"; script_mode: "rewrite" | "as-is"; start_time: string; end_time: string; stance: string; tone: string; persona: string; voice: string; aspect_ratio: "9:16" | "16:9"; duration: string; custom_instruction?: string; transcript?: string; audio_path?: string };
+type ProjectRow = { id: number; youtube_url: string; source_type: "youtube" | "news" | "text"; script_mode: "rewrite" | "as-is"; start_time: string; end_time: string; stance: string; tone: string; persona: string; voice: string; tts_provider: "local" | "gemini"; aspect_ratio: "9:16" | "16:9"; duration: string; custom_instruction?: string; transcript?: string; audio_path?: string };
 
 function timeToMs(value: string) {
   const parts = value.split(":").map(Number);
@@ -84,18 +89,22 @@ export async function processProject(projectId: number) {
     const projectDir = path.join(config.mediaRoot, String(projectId));
     await fs.mkdir(projectDir, { recursive: true });
     const audioPath = path.join(projectDir, "voiceover.wav");
-    await geminiSpeechProvider.synthesize(review.script, audioPath, project.voice);
+    const speechProvider = project.tts_provider === "gemini" ? geminiSpeechProvider : piperSpeechProvider;
+    await speechProvider.synthesize(review.script, audioPath, project.voice);
     db.prepare("UPDATE projects SET audio_path=? WHERE id=?").run(audioPath, projectId);
 
     updateStatus("stock-media");
-    const assets = await searchStockMedia(review.searchTerms || [], project.aspect_ratio === "9:16" ? "portrait" : "landscape");
-    db.prepare("UPDATE render_jobs SET stage='render',progress=70,payload=?,updated_at=CURRENT_TIMESTAMP WHERE project_id=?").run(JSON.stringify({ title: review.title, assets }), projectId);
-    const clipPaths = await downloadStockMedia(assets.slice(0, 6), path.join(projectDir, "stock"));
-    if (!clipPaths.length) throw new Error("Copyright-safe stock footage கிடைக்கவில்லை");
+    const targetDuration = finalRenderDuration(project.duration, audioPath);
+    const requiredClips = requiredClipCount(targetDuration);
+    const searchTarget = requiredClips + Math.max(4, Math.ceil(requiredClips * 0.2));
+    const assets = await searchStockMedia(review.searchTerms || [], project.aspect_ratio === "9:16" ? "portrait" : "landscape", searchTarget);
+    db.prepare("UPDATE render_jobs SET stage='render',progress=70,payload=?,updated_at=CURRENT_TIMESTAMP WHERE project_id=?").run(JSON.stringify({ title: review.title, searchTerms: review.searchTerms || [], assets }), projectId);
+    const clipPaths = await downloadStockMedia(assets, path.join(projectDir, "stock"), requiredClips);
+    if (clipPaths.length < requiredClips) throw new Error(`${requiredClips} தனித்தனி copyright-safe clips தேவை; ${clipPaths.length} மட்டும் download ஆனது`);
 
     updateStatus("render");
     const outputPath = path.join(projectDir, `review-${project.aspect_ratio.replace(":", "x")}.mp4`);
-    const rendered = await renderVideo({ aspectRatio: project.aspect_ratio, audioPath, clips: clipPaths, outputPath, targetDuration: wavDuration(audioPath) + AUDIO_TAIL_SECONDS });
+    const rendered = await renderVideo({ aspectRatio: project.aspect_ratio, audioPath, clips: clipPaths, outputPath, targetDuration });
     db.prepare("UPDATE projects SET output_path=?,status='complete',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(outputPath, projectId);
     db.prepare("UPDATE render_jobs SET stage='complete',progress=100,updated_at=CURRENT_TIMESTAMP WHERE project_id=?").run(projectId);
     return { projectId, status: "complete", title: review.title, assetCount: clipPaths.length, audioPath, outputPath: rendered.outputPath };
@@ -121,12 +130,23 @@ export async function rerenderProject(projectId: number) {
   const project = db.prepare("SELECT * FROM projects WHERE id = ?").get(projectId) as ProjectRow | undefined;
   if (!project) throw new Error("Project கிடைக்கவில்லை");
   if (!project.audio_path) throw new Error("Voiceover இல்லை — முதலில் video-ஐ முழுமையாக உருவாக்கவும்");
-  const clipPaths = await stockClipPaths(projectId);
-  if (!clipPaths.length) throw new Error("Stock clips கிடைக்கவில்லை");
+  let clipPaths = await stockClipPaths(projectId);
+  const targetDuration = finalRenderDuration(project.duration, project.audio_path);
+  const requiredClips = requiredClipCount(targetDuration);
+  if (clipPaths.length < requiredClips) {
+    const job = db.prepare("SELECT payload FROM render_jobs WHERE project_id=? ORDER BY id DESC LIMIT 1").get(projectId) as { payload: string | null } | undefined;
+    let payload: { title?: string; searchTerms?: string[]; assets?: import("./providers/types").StockAsset[] } = {};
+    try { payload = job?.payload ? JSON.parse(job.payload) : {}; } catch { payload = {}; }
+    const savedAssets = Array.isArray(payload.assets) ? payload.assets : [];
+    const terms = Array.isArray(payload.searchTerms) && payload.searchTerms.length ? payload.searchTerms : [payload.title || "people lifestyle", "technology", "city", "nature"];
+    const freshAssets = savedAssets.length >= requiredClips ? savedAssets : await searchStockMedia(terms, project.aspect_ratio === "9:16" ? "portrait" : "landscape", requiredClips + Math.max(4, Math.ceil(requiredClips * 0.2)));
+    clipPaths = await downloadStockMedia(freshAssets, path.join(config.mediaRoot, String(projectId), "stock"), requiredClips);
+  }
+  if (clipPaths.length < requiredClips) throw new Error(`${requiredClips} தனித்தனி clips தேவை; ${clipPaths.length} மட்டும் கிடைத்தது`);
   db.prepare("UPDATE projects SET status='render',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(projectId);
   try {
     const outputPath = path.join(config.mediaRoot, String(projectId), `review-${project.aspect_ratio.replace(":", "x")}.mp4`);
-    await renderVideo({ aspectRatio: project.aspect_ratio, audioPath: project.audio_path, clips: clipPaths, outputPath, targetDuration: wavDuration(project.audio_path) + AUDIO_TAIL_SECONDS });
+    await renderVideo({ aspectRatio: project.aspect_ratio, audioPath: project.audio_path, clips: clipPaths, outputPath, targetDuration });
     db.prepare("UPDATE projects SET output_path=?,status='complete',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(outputPath, projectId);
     return { projectId, status: "complete", clipCount: clipPaths.length, outputPath };
   } catch (error) {

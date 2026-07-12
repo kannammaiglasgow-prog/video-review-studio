@@ -39,7 +39,7 @@ function AssetPreview({ asset, className }: { asset: StockResult; className: str
 }
 
 export default function Home() {
-  const [form, setForm] = useState({ url: "", sourceType: "youtube", scriptMode: "rewrite", sourceText: "", startTime: "00:00", endTime: "01:00", format: "9:16", customInstruction: "", ...defaults });
+  const [form, setForm] = useState({ url: "", sourceType: "youtube", scriptMode: "rewrite", sourceText: "", startTime: "00:00", endTime: "01:00", ttsProvider: "local", format: "9:16", customInstruction: "", ...defaults });
   const [status, setStatus] = useState<"idle" | "saving" | "queued" | "error">("idle");
   const [message, setMessage] = useState("");
   const [projectId, setProjectId] = useState<number | null>(null);
@@ -61,8 +61,12 @@ export default function Home() {
   const [ytDescription, setYtDescription] = useState("");
   const [ytPrivacy, setYtPrivacy] = useState("private");
   const [ytUploading, setYtUploading] = useState(false);
-  const [ytResult, setYtResult] = useState<{ url: string; privacyStatus: string } | null>(null);
+  const [ytResult, setYtResult] = useState<{ url: string; privacyStatus: string; thumbnail?: string } | null>(null);
+  const [hasThumb, setHasThumb] = useState(false);
+  const [thumbVersion, setThumbVersion] = useState(0);
+  const [thumbBusy, setThumbBusy] = useState(false);
   const uploadInput = useRef<HTMLInputElement>(null);
+  const thumbInput = useRef<HTMLInputElement>(null);
   const previewClass = useMemo(() => form.format === "9:16" ? "aspect-[9/16] max-h-[540px]" : "aspect-video", [form.format]);
   const set = (key: string, value: string) => setForm((current) => ({ ...current, [key]: value }));
   const videoUrl = projectId ? `/api/projects/${projectId}/video${videoVersion ? `?v=${videoVersion}` : ""}` : "";
@@ -80,6 +84,10 @@ export default function Home() {
       setSuggestions(data.results || []);
       if (data.title) setYtTitle(data.title);
     } catch { setSuggestions([]); }
+    try {
+      const response = await fetch(`/api/projects/${id}/thumbnail`, { method: "HEAD" });
+      setHasThumb(response.ok); setThumbVersion(Date.now());
+    } catch { setHasThumb(false); }
   }, []);
 
   const loadYtStatus = useCallback(async () => {
@@ -99,11 +107,14 @@ export default function Home() {
         loadClips(latest.id);
       }
     }).catch(() => undefined);
-    loadYtStatus();
+    fetch("/api/youtube/status").then((response) => response.json()).then(setYtStatus).catch(() => setYtStatus(null));
     const params = new URLSearchParams(window.location.search);
-    if (params.get("yt") === "connected") { setMessage("YouTube channel இணைக்கப்பட்டது ✅"); window.history.replaceState(null, "", "/"); }
-    if (params.get("yt") === "error") { setMessage("YouTube இணைப்பு தோல்வியடைந்தது — மீண்டும் முயற்சிக்கவும்."); window.history.replaceState(null, "", "/"); }
-  }, [loadClips, loadYtStatus]);
+    const oauthResult = params.get("yt");
+    if (oauthResult === "connected" || oauthResult === "error") {
+      Promise.resolve().then(() => setMessage(oauthResult === "connected" ? "YouTube channel இணைக்கப்பட்டது ✅" : "YouTube இணைப்பு தோல்வியடைந்தது — மீண்டும் முயற்சிக்கவும்."));
+      window.history.replaceState(null, "", "/");
+    }
+  }, [loadClips]);
 
   async function submit(event: FormEvent) {
     event.preventDefault(); setStatus("saving"); setMessage(""); setProjectId(null); setClips([]); setEditingClip(null); setPendingRender(false); setSuggestions([]); setYtResult(null); setYtTitle(""); setYtDescription("");
@@ -185,6 +196,35 @@ export default function Home() {
     setUploading(false);
   }
 
+  async function setThumb(action: () => Promise<Response>) {
+    if (projectId === null) return;
+    setThumbBusy(true);
+    try {
+      const response = await action();
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Thumbnail சேமிக்க முடியவில்லை");
+      setHasThumb(true); setThumbVersion(Date.now());
+      setMessage("Thumbnail தயார் — upload செய்யும்போது தானாக YouTube-ல் அமைக்கப்படும்.");
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Thumbnail சேமிக்க முடியவில்லை"); }
+    finally { setThumbBusy(false); }
+  }
+
+  function uploadThumb(file: File) {
+    const body = new FormData();
+    body.append("file", file);
+    setThumb(() => fetch(`/api/projects/${projectId}/thumbnail`, { method: "POST", body }));
+  }
+
+  function grabThumbFromVideo() {
+    setThumb(() => fetch(`/api/projects/${projectId}/thumbnail`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ atSec: 1.5 }) }));
+  }
+
+  async function removeThumb() {
+    if (projectId === null) return;
+    await fetch(`/api/projects/${projectId}/thumbnail`, { method: "DELETE" });
+    setHasThumb(false);
+  }
+
   async function rerender() {
     if (projectId === null) return;
     setRerendering(true); setMessage("புதிய clips-உடன் video மீண்டும் render ஆகிறது...");
@@ -207,7 +247,7 @@ export default function Home() {
           <div className="flex flex-wrap gap-2">{sourceOptions.map((option) => <button key={option.value} type="button" onClick={() => set("sourceType", option.value)} className={`choice ${form.sourceType === option.value ? "choice-active" : ""}`}>{option.label}</button>)}</div>
           {form.sourceType !== "text" && <label className="block"><span className="field-label">{form.sourceType === "news" ? "News URL" : "YouTube URL"}</span><div className="url-input"><span>{form.sourceType === "news" ? "📰" : "▶"}</span><input required type="url" placeholder={form.sourceType === "news" ? "https://www.bbc.com/news/..." : "https://youtube.com/watch?v=..."} value={form.url} onChange={(e) => set("url", e.target.value)} /></div></label>}
           {form.sourceType === "youtube" && <div className="grid gap-4 sm:grid-cols-2"><label><span className="field-label">தொடக்க நேரம்</span><input className="text-input" value={form.startTime} onChange={(e) => set("startTime", e.target.value)} placeholder="00:00" /></label><label><span className="field-label">முடிவு நேரம்</span><input className="text-input" value={form.endTime} onChange={(e) => set("endTime", e.target.value)} placeholder="01:00" /></label></div>}
-          {form.sourceType === "news" && <p className="text-xs text-slate-400">Article-ஐ AI படித்து, நீங்கள் தேர்ந்தெடுக்கும் நிலைப்பாட்டில் தமிழ் video உருவாக்கும். "நடுநிலை" என்றால் neutral செய்தி சுருக்கம்; மற்ற நிலைப்பாடுகள் கருத்து/review style.</p>}
+          {form.sourceType === "news" && <p className="text-xs text-slate-400">Article-ஐ AI படித்து, நீங்கள் தேர்ந்தெடுக்கும் நிலைப்பாட்டில் தமிழ் video உருவாக்கும். “நடுநிலை” என்றால் neutral செய்தி சுருக்கம்; மற்ற நிலைப்பாடுகள் கருத்து/review style.</p>}
           {form.sourceType === "text" && <>
             <label className="block"><span className="field-label">உங்கள் உரை / voice-over script</span><textarea required className="text-input min-h-40 resize-y" placeholder="உங்கள் செய்தி, குறிப்பு அல்லது voice-over script-ஐ இங்கே paste செய்யவும்..." value={form.sourceText} onChange={(e) => set("sourceText", e.target.value)} /></label>
             <div className="flex flex-wrap gap-2">
@@ -218,7 +258,7 @@ export default function Home() {
           </>}
         </section>
         <section className="panel space-y-7"><div className="step-title"><span>2</span><div><h2>Review பாணியை வடிவமைக்கவும்</h2><p>AI எழுத வேண்டிய நிலைப்பாடு மற்றும் உணர்வு</p></div></div><ChoiceGroup label="நிலைப்பாடு" name="stance" value={form.stance} onChange={(v) => set("stance", v)} /><ChoiceGroup label="Tone" name="tone" value={form.tone} onChange={(v) => set("tone", v)} /><ChoiceGroup label="கதாபாத்திர பாணி" name="persona" value={form.persona} onChange={(v) => set("persona", v)} /><label className="block"><span className="field-label">கூடுதல் வழிமுறை (விருப்பம்)</span><textarea className="text-input min-h-24 resize-y" placeholder="உதாரணம்: தொடக்கத்தில் வலுவான hook சேர்க்கவும்..." value={form.customInstruction} onChange={(e) => set("customInstruction", e.target.value)} /></label></section>
-        <section className="panel space-y-7"><div className="step-title"><span>3</span><div><h2>குரல் மற்றும் output</h2><p>Final video எப்படி இருக்க வேண்டும்?</p></div></div><ChoiceGroup label="தமிழ் குரல்" name="voice" value={form.voice} onChange={(v) => set("voice", v)} /><div className="space-y-3"><p className="text-sm font-semibold text-slate-200">Video வடிவம்</p><div className="grid gap-3 sm:grid-cols-2"><button type="button" onClick={() => set("format", "9:16")} className={`format-card ${form.format === "9:16" ? "format-active" : ""}`}><span className="portrait-icon"/><strong>Shorts / Reels</strong><small>9:16 · 1080 × 1920</small></button><button type="button" onClick={() => set("format", "16:9")} className={`format-card ${form.format === "16:9" ? "format-active" : ""}`}><span className="landscape-icon"/><strong>Normal video</strong><small>16:9 · 1920 × 1080</small></button></div></div><ChoiceGroup label="கால அளவு" name="duration" value={form.duration} onChange={(v) => set("duration", v)} /><p className="text-xs text-slate-400">குறிப்பு: voice-over சற்று நீளமானால் video-வும் voice முடியும் வரை நீளும் — பேச்சு நடுவில் வெட்டப்படாது.</p></section>
+        <section className="panel space-y-7"><div className="step-title"><span>3</span><div><h2>குரல் மற்றும் output</h2><p>Final video எப்படி இருக்க வேண்டும்?</p></div></div><div className="space-y-3"><p className="text-sm font-semibold text-slate-200">TTS முறை</p><div className="grid gap-3 sm:grid-cols-2"><button type="button" onClick={() => set("ttsProvider", "local")} className={`format-card ${form.ttsProvider === "local" ? "format-active" : ""}`}><strong>Local Piper — இலவசம்</strong><small>API செலவு இல்லை · Tamil பெண் குரல்</small></button><button type="button" onClick={() => set("ttsProvider", "gemini")} className={`format-card ${form.ttsProvider === "gemini" ? "format-active" : ""}`}><strong>Gemini TTS</strong><small>மேம்பட்ட குரல் · API கட்டணம் உண்டு</small></button></div></div>{form.ttsProvider === "gemini" ? <ChoiceGroup label="தமிழ் குரல்" name="voice" value={form.voice} onChange={(v) => set("voice", v)} /> : <p className="text-xs text-emerald-300/80">Local Piper தற்போது Rasa Tamil பெண் குரலைப் பயன்படுத்தும்.</p>}<div className="space-y-3"><p className="text-sm font-semibold text-slate-200">Video வடிவம்</p><div className="grid gap-3 sm:grid-cols-2"><button type="button" onClick={() => set("format", "9:16")} className={`format-card ${form.format === "9:16" ? "format-active" : ""}`}><span className="portrait-icon"/><strong>Shorts / Reels</strong><small>9:16 · 1080 × 1920</small></button><button type="button" onClick={() => set("format", "16:9")} className={`format-card ${form.format === "16:9" ? "format-active" : ""}`}><span className="landscape-icon"/><strong>Normal video</strong><small>16:9 · 1920 × 1080</small></button></div></div><ChoiceGroup label="கால அளவு" name="duration" value={form.duration} onChange={(v) => set("duration", v)} /><p className="text-xs text-slate-400">குறிப்பு: voice-over சற்று நீளமானால் video-வும் voice முடியும் வரை நீளும் — பேச்சு நடுவில் வெட்டப்படாது.</p></section>
         <button disabled={status === "saving"} className="generate-button" type="submit"><span>{status === "saving" ? "தயாராகிறது..." : "Review video உருவாக்கு"}</span><b>→</b></button>{message && <div className={`status ${status === "error" ? "status-error" : ""}`}>{message}</div>}
         {projectId !== null && <section className="panel space-y-4"><div className="step-title"><span>✓</span><div><h2>உங்கள் review video தயாராகிவிட்டது</h2><p>Preview செய்து MP4 file-ஐ சேமிக்கலாம்</p></div></div><video key={videoUrl} className="mx-auto max-h-[620px] w-full rounded-xl bg-black" src={videoUrl} controls playsInline /><a className="generate-button" href={`/api/projects/${projectId}/video?download=1`} download><span>MP4 video சேமிக்கவும்</span><b>↓</b></a>
           <div className="space-y-4 rounded-xl border border-red-400/20 bg-red-400/[.05] p-4">
@@ -233,8 +273,19 @@ export default function Home() {
               <label className="block"><span className="field-label">Video title</span><input className="text-input" value={ytTitle} onChange={(e) => setYtTitle(e.target.value)} placeholder="Video-வின் தலைப்பு..." maxLength={100} /></label>
               <label className="block"><span className="field-label">Description (விருப்பம் — காலியாக விட்டால் script பயன்படும்)</span><textarea className="text-input min-h-20 resize-y" value={ytDescription} onChange={(e) => setYtDescription(e.target.value)} placeholder="Video description..." /></label>
               <div className="flex flex-wrap gap-2">{privacyOptions.map((option) => <button key={option.value} type="button" onClick={() => setYtPrivacy(option.value)} className={`choice ${ytPrivacy === option.value ? "choice-active" : ""}`}>{option.label}</button>)}</div>
+              <div className="space-y-2">
+                <p className="field-label">Thumbnail (விருப்பம்)</p>
+                {hasThumb && <img className="max-h-40 rounded-lg border border-white/10" src={`/api/projects/${projectId}/thumbnail?v=${thumbVersion}`} alt="thumbnail" />}
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" className="choice" disabled={thumbBusy} onClick={() => thumbInput.current?.click()}>{thumbBusy ? "சேமிக்கிறது..." : "⬆️ Image upload"}</button>
+                  <button type="button" className="choice" disabled={thumbBusy} onClick={grabThumbFromVideo}>🎞️ Video-லிருந்து எடு</button>
+                  {hasThumb && <button type="button" className="choice" onClick={removeThumb}>❌ நீக்கு</button>}
+                </div>
+                <input ref={thumbInput} type="file" accept="image/jpeg,image/png" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) uploadThumb(file); e.target.value = ""; }} />
+                <p className="text-xs text-slate-400">JPG/PNG, 2MB வரை. Thumbnail இருந்தால் upload-உடன் தானாக YouTube-ல் அமைக்கப்படும்.</p>
+              </div>
               <button type="button" onClick={uploadToYt} disabled={ytUploading} className="generate-button"><span>{ytUploading ? "Upload ஆகிறது..." : "YouTube-க்கு upload செய்"}</span><b>📤</b></button>
-              {ytResult && <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm">✅ Upload முடிந்தது ({ytResult.privacyStatus}) — <a className="font-semibold underline" href={ytResult.url} target="_blank" rel="noreferrer">{ytResult.url}</a><p className="mt-1 text-xs text-slate-400">Private-ஆக upload ஆனது; YouTube Studio-ல் சரிபார்த்து நீங்களே publish செய்யலாம்.</p></div>}
+              {ytResult && <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm">✅ Upload முடிந்தது ({ytResult.privacyStatus}) — <a className="font-semibold underline" href={ytResult.url} target="_blank" rel="noreferrer">{ytResult.url}</a>{ytResult.thumbnail === "set" && <p className="mt-1 text-xs">🖼️ Thumbnail-உம் அமைக்கப்பட்டது.</p>}{ytResult.thumbnail && ytResult.thumbnail !== "set" && ytResult.thumbnail !== "none" && <p className="mt-1 text-xs text-amber-300">⚠️ Video upload ஆனது, ஆனால் thumbnail: {ytResult.thumbnail}</p>}<p className="mt-1 text-xs text-slate-400">YouTube Studio-ல் சரிபார்த்து நீங்களே publish செய்யலாம்.</p></div>}
             </>}
           </div>
         </section>}

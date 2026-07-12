@@ -2,137 +2,130 @@
 
 ## Product goal
 
-Local-first Tamil AI video review generator for personal use.
+Local-first Tamil AI video review generator for personal use. Inputs may be in any language; UI, review script, and speech output are Tamil.
 
 Workflow:
 
-`YouTube URL → transcript → selected time segment → review analysis → Tamil voice-over script → Gemini TTS → copyright-safe stock footage → FFmpeg MP4`
+`YouTube/news/text → extraction → selected segment → review analysis → Tamil script → Local Piper or Gemini TTS → copyright-safe stock media → FFmpeg MP4 → optional YouTube upload`
 
-Input videos may be in any language. Output UI, script, speech, and review are Tamil.
+## Current state
 
-## Current status
+The Gemini workflow has produced playable MP4 files end-to-end on Windows. Local Piper is now the default zero-API-cost TTS choice, and Gemini TTS remains an explicit paid choice in the UI.
 
-The MVP works end-to-end on Windows when started from the user's normal PowerShell. Successful projects have produced playable MP4 files with Gemini speech and six stock clips.
+Local Piper files are installed and intentionally ignored by Git:
 
-Implemented:
+- `.venv-local-tts/Scripts/piper.exe`
+- `models/piper/ta_IN-rasa_female-medium.onnx`
+- `models/piper/ta_IN-rasa_female-medium.onnx.json`
+
+Local TTS smoke test currently reaches Piper but fails importing `onnxruntime_pybind11_state` with `ImportError: DLL load failed`. This normally requires installing or repairing Microsoft Visual C++ 2015–2022 Redistributable x64. Do not silently use paid Gemini when Local is selected.
+
+## Implemented
 
 - Next.js 16.2.10 App Router, React 19, TypeScript, Tailwind CSS 4
-- Tamil single-page Review Studio UI
-- YouTube standard and Shorts URLs
-- Source segment selection using `MM:SS` or `HH:MM:SS`
-- Review stance, tone, persona, and voice controls
-- 9:16 (1080×1920) and 16:9 (1920×1080)
-- Output presets: 15s, 30s, 60s, 2m, 5m, 8m, 10m
-- SQLite using Node 24 built-in `node:sqlite`
-- Persistent projects and render jobs
-- `youtube-transcript`, with yt-dlp JSON3 subtitle fallback
-- Gemini 3.5 Flash script generation with 2.5 Flash fallback
-- Gemini 3.1 Flash TTS with 2.5 Flash TTS fallback
-- Automatic retry/backoff for Gemini 429/5xx/high-demand responses
-- Pexels primary stock video search; Pixabay fallback
-- Stock media download and FFmpeg normalization/concat/render
-- MP4 range-streaming API, browser player, and download button
-- Latest completed project restored after page refresh
-
-## Recent duration fix
-
-Previously, a requested 60-second output could end at 36 seconds because rendering followed actual TTS length. The code now:
-
-- gives Gemini explicit Tamil word-count targets based on requested duration;
-- passes an exact `targetDuration` to FFmpeg;
-- pads short audio while preserving the selected final duration.
-
-Validate this with a fresh 60-second generation.
+- YouTube standard/Shorts, public news URL, and pasted-text inputs
+- YouTube segment selection with `MM:SS` or `HH:MM:SS`
+- Tamil stance, tone, persona, voice, duration, and 9:16/16:9 controls
+- Output presets from 15 seconds to 10 minutes
+- SQLite via Node 24 `node:sqlite`; migration 4 adds `projects.tts_provider`
+- Gemini script generation with retry, model fallback, balanced JSON extraction, repair, and schema checks
+- Local Piper Tamil female voice and selectable Gemini TTS
+- Pexels/Pixabay video and image search with provider/id deduplication
+- One unique visual for every six seconds: `ceil(finalDuration / 6)`; no cycling/repetition
+- Atomic stock downloads that preserve existing clips on insufficient results
+- Clip preview, search, replacement/upload, and rerender
+- FFmpeg normalization/render; final duration is `max(requested, audio + 2s)`
+- MP4 range streaming, player, audio preview, and download
+- Google OAuth YouTube upload with CSRF state validation and streamed uploads
+- Thumbnail upload or video-frame extraction with file-signature validation
+- Public-only news fetching with DNS/private-IP and redirect protections
 
 ## Important files
 
-- `src/app/page.tsx` — Tamil Review Studio UI and client workflow
+- `src/app/page.tsx` — Tamil UI and client workflow
 - `src/app/api/projects/route.ts` — create/list projects
-- `src/app/api/projects/[id]/process/route.ts` — process a project
-- `src/app/api/projects/[id]/video/route.ts` — MP4 streaming/download
-- `src/lib/database.ts` — SQLite schema and migration bootstrap
-- `src/lib/config.ts` — local paths and integration configuration
-- `src/services/pipeline.ts` — orchestration and duration mapping
-- `src/services/providers/transcript.ts` — transcript + yt-dlp fallback
-- `src/services/providers/gemini.ts` — review/TTS/retry/fallback
-- `src/services/providers/stock-media.ts` — Pexels/Pixabay/download
-- `src/services/render/ffmpeg.ts` — exact-duration FFmpeg rendering
-- `.env.example` — safe environment variable template
+- `src/app/api/projects/[id]/process/route.ts` — processing entrypoint
+- `src/app/api/projects/[id]/clips/*` — clip preview/replacement
+- `src/app/api/projects/[id]/thumbnail/route.ts` — thumbnail management
+- `src/app/api/projects/[id]/youtube/route.ts` — YouTube upload
+- `src/app/api/youtube/*` — OAuth lifecycle
+- `src/lib/config.ts` — paths and integrations
+- `src/lib/database.ts` — SQLite schema/bootstrap migrations
+- `src/lib/validation.ts` — request validation
+- `src/services/pipeline.ts` — orchestration and duration logic
+- `src/services/providers/gemini.ts` — review and Gemini TTS
+- `src/services/providers/piper.ts` — local Piper integration
+- `src/services/providers/news.ts` — safe public article fetching
+- `src/services/providers/stock-media.ts` — asset search/download
+- `src/services/render/ffmpeg.ts` — six-second unique-scene rendering
+- `scripts/test-local-tts.mjs` — UTF-8-safe Piper smoke test
 
-## Local data and secrets
+## Local environment
 
-Never commit:
+Installed during development:
 
-- `.env.local`
-- `data/`
-- `media/`
-- `secrets/`
-- local FFmpeg/yt-dlp binaries
+- Node.js 24
+- Python 3.11.9 and `piper-tts` virtual environment
+- FFmpeg 8.1.2
+- yt-dlp 2026.07.04
 
-Required environment variables:
+Never commit `.env.local`, `data/`, `media/`, `models/`, `.venv-local-tts/`, `secrets/`, or local binaries.
+
+Relevant safe environment template entries:
 
 ```env
 GEMINI_API_KEY=
 PEXELS_API_KEY=
 PIXABAY_API_KEY=
 YOUTUBE_API_KEY=
-GOOGLE_CLOUD_PROJECT_ID=
-GOOGLE_APPLICATION_CREDENTIALS=
 DATABASE_PATH=./data/review-studio.sqlite
 MEDIA_ROOT=./media
 FFMPEG_PATH=ffmpeg
 YTDLP_PATH=yt-dlp
+PIPER_EXECUTABLE_PATH=./.venv-local-tts/Scripts/piper.exe
+PIPER_MODEL_PATH=./models/piper/ta_IN-rasa_female-medium.onnx
 ```
 
-YouTube API and Google Cloud TTS are currently optional. Gemini TTS is primary.
+## Immediate next step: fix and verify Local TTS
 
-## Windows runtime
-
-Installed versions during development:
-
-- Node.js 24
-- FFmpeg 8.1.2
-- yt-dlp 2026.07.04
-
-Run from the user's normal PowerShell, not a restricted agent sandbox, so yt-dlp and FFmpeg can spawn:
+Run from normal PowerShell:
 
 ```powershell
-npm.cmd install
-npm.cmd run dev
+winget install --id Microsoft.VCRedist.2015+.x64 -e
+cd C:\Users\kanna\Documents\Codex\2026-07-12\o\work\video-review-studio
+npm.cmd run test:local-tts
 ```
 
-Open `http://localhost:3000`.
+Expected output is `media/piper-test.wav`. Then restart the dev server and generate a fresh 15-second video with **Local Piper — இலவசம்** selected.
 
-## Validation
+## Validation completed before handoff
 
-Run:
+- `git diff --check` — passed
+- `npm.cmd run lint` — 0 errors, 5 existing `<img>` optimization warnings
+- `npx.cmd tsc --noEmit` — passed
+- `npm.cmd run build` — passed
+- One harmless Next/Turbopack output-file-tracing warning remains due to configurable filesystem paths
 
-```powershell
-node node_modules/typescript/bin/tsc --noEmit
-npm.cmd run build
-```
+## Recommended regression checks
 
-Then verify:
-
-1. Standard and Shorts YouTube URLs.
-2. A selected source segment such as 07:00–09:00.
-3. Exact 15s, 30s, 60s, and 2m outputs.
-4. Both 9:16 and 16:9.
-5. Gemini high-demand fallback.
-6. Player range requests and MP4 download.
+1. Local Piper smoke test and 15-second local-TTS video.
+2. Gemini TTS selection still works independently.
+3. A fresh 60-second output lasts at least 60 seconds.
+4. A one-minute output uses at least ten unique six-second assets.
+5. YouTube selection such as 07:00–09:00 uses only that transcript segment.
+6. Clip replacement/rerender, thumbnail, MP4 download, and YouTube upload.
 
 ## Known follow-up work
 
-- Add visible processing stages/progress instead of one long blocking request.
-- Add a projects/history screen with retry and delete controls.
-- Generate and burn Tamil subtitles; current preview text is illustrative only.
+- Resolve/verify the Windows Visual C++ dependency for local `onnxruntime`.
+- Add visible asynchronous processing progress and a projects/history screen.
+- Generate and burn real Tamil subtitles; current preview subtitle is illustrative.
 - Add optional background music with ducking.
-- Split long TTS scripts into chunks for 5–10 minute outputs.
-- Add audio-transcription fallback when a YouTube video has no captions.
-- Replace the current bootstrap migration with numbered SQL migration files as schema grows.
-- Resolve the harmless Next.js output-file-tracing warning caused by configurable filesystem paths.
-- Add automated unit/integration tests.
+- Chunk long TTS scripts for 5–10 minute outputs.
+- Add audio transcription fallback for YouTube videos without captions.
+- Move bootstrap migrations to numbered SQL migration files as schema grows.
+- Add automated unit and integration tests.
 
 ## Safety and copyright
 
-The current render uses Pexels/Pixabay stock media. Source YouTube clips are not inserted into the output. Preserve this default unless the user explicitly confirms rights to source footage.
+Outputs use Pexels/Pixabay assets. Source YouTube footage is not inserted into renders. Preserve this default unless the user confirms they own the source footage rights.

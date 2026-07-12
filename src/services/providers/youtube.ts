@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { config } from "@/lib/config";
 
 const SCOPES = "https://www.googleapis.com/auth/youtube.upload https://www.googleapis.com/auth/youtube.readonly";
@@ -22,7 +23,7 @@ export function isYoutubeConnected() {
   return fs.existsSync(config.youtubeOAuth.tokenPath);
 }
 
-export function youtubeAuthUrl(redirectUri: string) {
+export function youtubeAuthUrl(redirectUri: string, state: string) {
   const { clientId } = oauthClient();
   const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
   url.searchParams.set("client_id", clientId);
@@ -31,6 +32,7 @@ export function youtubeAuthUrl(redirectUri: string) {
   url.searchParams.set("scope", SCOPES);
   url.searchParams.set("access_type", "offline");
   url.searchParams.set("prompt", "consent");
+  url.searchParams.set("state", state);
   return url.toString();
 }
 
@@ -45,7 +47,7 @@ export async function exchangeYoutubeCode(code: string, redirectUri: string) {
   if (!response.ok || !data.refresh_token) throw new Error(data?.error_description || "Google token exchange தோல்வியடைந்தது");
   await fsp.mkdir(path.dirname(config.youtubeOAuth.tokenPath), { recursive: true });
   const stored: StoredToken = { refreshToken: data.refresh_token, savedAt: new Date().toISOString() };
-  await fsp.writeFile(config.youtubeOAuth.tokenPath, JSON.stringify(stored, null, 2), "utf8");
+  await fsp.writeFile(config.youtubeOAuth.tokenPath, JSON.stringify(stored, null, 2), { encoding: "utf8", mode: 0o600 });
 }
 
 async function accessToken() {
@@ -82,6 +84,23 @@ export async function disconnectYoutube() {
   await fsp.rm(config.youtubeOAuth.tokenPath, { force: true });
 }
 
+export async function setYoutubeThumbnail(videoId: string, filePath: string) {
+  const token = await accessToken();
+  const data = await fsp.readFile(filePath);
+  if (data.length > 2 * 1024 * 1024) throw new Error("Thumbnail 2MB-க்கு குறைவாக இருக்க வேண்டும்");
+  const mime = /\.png$/i.test(filePath) ? "image/png" : "image/jpeg";
+  const response = await fetch(`https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${videoId}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": mime, "Content-Length": String(data.length) },
+    body: new Uint8Array(data),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    if (response.status === 403) throw new Error("Thumbnail அமைக்க channel-ல் phone verification தேவை — youtube.com/verify-ல் verify செய்யவும்");
+    throw new Error(error?.error?.message || `Thumbnail அமைக்க முடியவில்லை (${response.status})`);
+  }
+}
+
 export type YoutubeUploadInput = { filePath: string; title: string; description: string; tags?: string[]; privacyStatus: "private" | "unlisted" | "public" };
 
 export async function uploadToYoutube(input: YoutubeUploadInput) {
@@ -102,7 +121,9 @@ export async function uploadToYoutube(input: YoutubeUploadInput) {
   }
   const location = start.headers.get("location");
   if (!location) throw new Error("YouTube upload URL கிடைக்கவில்லை");
-  const upload = await fetch(location, { method: "PUT", headers: { "Content-Type": "video/mp4", "Content-Length": String(size) }, body: new Uint8Array(await fsp.readFile(input.filePath)) });
+  const uploadBody = Readable.toWeb(fs.createReadStream(input.filePath)) as ReadableStream;
+  const uploadInit: RequestInit & { duplex: "half" } = { method: "PUT", headers: { "Content-Type": "video/mp4", "Content-Length": String(size) }, body: uploadBody, duplex: "half" };
+  const upload = await fetch(location, uploadInit);
   const result = await upload.json().catch(() => ({}));
   if (!upload.ok || !result.id) throw new Error(result?.error?.message || `YouTube upload தோல்வியடைந்தது (${upload.status})`);
   return { videoId: result.id as string, url: `https://youtu.be/${result.id}`, privacyStatus: input.privacyStatus };

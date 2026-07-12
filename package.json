@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "check:ffmpeg": "node scripts/check-ffmpeg.mjs"
+    "check:ffmpeg": "node scripts/check-ffmpeg.mjs",
+    "test:local-tts": "node scripts/test-local-tts.mjs"
   },
   "dependencies": {
     "@next/swc-win32-x64-msvc": "16.2.10",

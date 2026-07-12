@@ -3,7 +3,8 @@ import path from "node:path";
 import { NextResponse } from "next/server";
 import { database } from "@/lib/database";
 import { config } from "@/lib/config";
-import { uploadToYoutube } from "@/services/providers/youtube";
+import { setYoutubeThumbnail, uploadToYoutube } from "@/services/providers/youtube";
+import { thumbnailPath } from "@/lib/thumbnails";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -27,7 +28,13 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const tags = Array.isArray(body?.tags) ? body.tags.filter((tag: unknown) => typeof tag === "string").slice(0, 20) : [];
 
     const result = await uploadToYoutube({ filePath, title, description, tags, privacyStatus: privacy });
-    return NextResponse.json(result);
+    const thumbnail = thumbnailPath(projectId);
+    let thumbnailStatus = "none";
+    if (thumbnail) {
+      try { await setYoutubeThumbnail(result.videoId, thumbnail); thumbnailStatus = "set"; }
+      catch (error) { thumbnailStatus = error instanceof Error ? error.message : "thumbnail தோல்வி"; }
+    }
+    return NextResponse.json({ ...result, thumbnail: thumbnailStatus });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "YouTube upload தோல்வியடைந்தது" }, { status: 400 });
   }

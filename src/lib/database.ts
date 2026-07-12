@@ -54,6 +54,8 @@ function migrate(db: DatabaseSync) {
   db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (2, 'add_source_type')");
   if (!hasColumn("script_mode")) db.exec("ALTER TABLE projects ADD COLUMN script_mode TEXT NOT NULL DEFAULT 'rewrite'");
   db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (3, 'add_script_mode')");
+  if (!hasColumn("tts_provider")) db.exec("ALTER TABLE projects ADD COLUMN tts_provider TEXT NOT NULL DEFAULT 'local'");
+  db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (4, 'add_tts_provider')");
 }
 
 export function database() {

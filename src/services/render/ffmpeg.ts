@@ -6,6 +6,12 @@ import { config } from "@/lib/config";
 
 export type RenderSpec = { aspectRatio: "9:16" | "16:9"; audioPath: string; clips: string[]; subtitlePath?: string; outputPath: string; targetDuration: number };
 
+export const CLIP_DURATION_SECONDS = 6;
+
+export function requiredClipCount(duration: number) {
+  return Math.max(1, Math.ceil(duration / CLIP_DURATION_SECONDS));
+}
+
 export function dimensions(aspectRatio: RenderSpec["aspectRatio"]) {
   return aspectRatio === "9:16" ? { width: 1080, height: 1920 } : { width: 1920, height: 1080 };
 }
@@ -37,20 +43,23 @@ export async function renderVideo(spec: RenderSpec) {
   const { width, height } = dimensions(spec.aspectRatio);
   const audioDuration = wavDuration(spec.audioPath);
   const duration = spec.targetDuration;
-  const sceneDuration = Math.max(2, duration / spec.clips.length);
+  const sceneCount = requiredClipCount(duration);
+  if (spec.clips.length < sceneCount) throw new Error(`${sceneCount} தனித்தனி clips தேவை; ${spec.clips.length} மட்டும் கிடைத்தது`);
   const normalized: string[] = [];
 
-  for (let index = 0; index < spec.clips.length; index += 1) {
+  for (let index = 0; index < sceneCount; index += 1) {
+    const clipPath = spec.clips[index];
+    const sceneDuration = Math.min(CLIP_DURATION_SECONDS, Math.max(0.1, duration - index * CLIP_DURATION_SECONDS));
     const output = path.join(workDir, `scene-${index}.mp4`);
-    const isImage = /\.(jpe?g|png|webp)$/i.test(spec.clips[index]);
+    const isImage = /\.(jpe?g|png|webp)$/i.test(clipPath);
     if (isImage) {
       // Static image-க்கு Ken Burns: பெரிய canvas-ல் scale செய்து மெதுவாக zoom-in
       const frames = Math.round(sceneDuration * 30);
       const baseWidth = Math.round(width * 1.4 / 2) * 2;
       const baseHeight = Math.round(height * 1.4 / 2) * 2;
-      await runFfmpeg(["-i", spec.clips[index], "-vf", `scale=${baseWidth}:${baseHeight}:force_original_aspect_ratio=increase,crop=${baseWidth}:${baseHeight},zoompan=z='min(1.0+0.0012*on,1.35)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${width}x${height}:fps=30,format=yuv420p`, "-frames:v", String(frames), "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", output]);
+      await runFfmpeg(["-i", clipPath, "-vf", `scale=${baseWidth}:${baseHeight}:force_original_aspect_ratio=increase,crop=${baseWidth}:${baseHeight},zoompan=z='min(1.0+0.0012*on,1.35)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${width}x${height}:fps=30,format=yuv420p`, "-frames:v", String(frames), "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", output]);
     } else {
-      await runFfmpeg(["-stream_loop", "-1", "-i", spec.clips[index], "-t", sceneDuration.toFixed(3), "-vf", `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},fps=30,format=yuv420p`, "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", output]);
+      await runFfmpeg(["-stream_loop", "-1", "-i", clipPath, "-t", sceneDuration.toFixed(3), "-vf", `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},fps=30,format=yuv420p`, "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", output]);
     }
     normalized.push(output);
   }

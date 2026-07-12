@@ -5,13 +5,12 @@ import { Readable } from "node:stream";
 import { NextResponse } from "next/server";
 import { config } from "@/lib/config";
 import { stockClipPaths } from "@/services/pipeline";
+import { detectImageType, imageExtension } from "@/lib/images";
 
 export const runtime = "nodejs";
 
 const allowedHosts = /(^|\.)pexels\.com$|(^|\.)pixabay\.com$/;
 const contentTypes: Record<string, string> = { ".mp4": "video/mp4", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp" };
-const imageExtensions = new Set([".jpg", ".jpeg", ".png", ".webp"]);
-
 async function clipPath(id: string, index: string) {
   const projectId = Number(id);
   const clipIndex = Number(index);
@@ -21,7 +20,25 @@ async function clipPath(id: string, index: string) {
 }
 
 function insideMediaRoot(filePath: string) {
-  return path.resolve(filePath).startsWith(path.resolve(config.mediaRoot) + path.sep);
+  const relative = path.relative(path.resolve(config.mediaRoot), path.resolve(filePath));
+  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+async function responseBuffer(response: Response, maximumBytes: number) {
+  const declaredSize = Number(response.headers.get("content-length") || 0);
+  if (declaredSize > maximumBytes) throw new Error("Download file மிகவும் பெரியது");
+  if (!response.body) throw new Error("Download response காலியாக உள்ளது");
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.length;
+    if (size > maximumBytes) { await reader.cancel(); throw new Error("Download file மிகவும் பெரியது"); }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)), size);
 }
 
 export async function GET(_request: Request, context: { params: Promise<{ id: string; index: string }> }) {
@@ -53,10 +70,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     if (requestType.includes("multipart/form-data")) {
       const file = (await request.formData()).get("file");
       if (!(file instanceof File)) throw new Error("Image file தேவை");
-      const extension = path.extname(file.name).toLowerCase();
-      if (!imageExtensions.has(extension)) throw new Error("JPG/PNG/WebP images மட்டும் upload செய்யலாம்");
       if (file.size > 25 * 1024 * 1024) throw new Error("Image 25MB-க்கு குறைவாக இருக்க வேண்டும்");
-      await replaceClipFile(filePath, extension, Buffer.from(await file.arrayBuffer()));
+      const data = Buffer.from(await file.arrayBuffer());
+      const imageType = detectImageType(data);
+      if (!imageType) throw new Error("உண்மையான JPG/PNG/WebP image மட்டும் upload செய்யலாம்");
+      await replaceClipFile(filePath, imageExtension(imageType), data);
       return NextResponse.json({ replaced: true, index: Number(index), kind: "image" });
     }
 
@@ -66,8 +84,11 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     const response = await fetch(url, { signal: AbortSignal.timeout(120_000) });
     if (!response.ok) throw new Error(`Download செய்ய முடியவில்லை (HTTP ${response.status})`);
     const isImage = body?.kind === "image";
-    const extension = isImage ? (/\.png$/i.test(url.pathname) ? ".png" : /\.webp$/i.test(url.pathname) ? ".webp" : ".jpg") : ".mp4";
-    await replaceClipFile(filePath, extension, Buffer.from(await response.arrayBuffer()));
+    const data = await responseBuffer(response, isImage ? 25 * 1024 * 1024 : 150 * 1024 * 1024);
+    const imageType = isImage ? detectImageType(data) : null;
+    if (isImage && !imageType) throw new Error("Stock image response செல்லுபடியாகவில்லை");
+    if (!isImage && !/^video\//i.test(response.headers.get("content-type") || "")) throw new Error("Stock video response செல்லுபடியாகவில்லை");
+    await replaceClipFile(filePath, imageType ? imageExtension(imageType) : ".mp4", data);
     return NextResponse.json({ replaced: true, index: Number(index), kind: isImage ? "image" : "video" });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Clip மாற்ற முடியவில்லை" }, { status: 400 });
