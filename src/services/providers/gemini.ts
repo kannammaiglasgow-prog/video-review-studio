@@ -115,23 +115,36 @@ async function requestJson<T>(models: string[], prompt: string, temperature: num
   throw new Error(`Gemini சரியான JSON திருப்பவில்லை — மீண்டும் முயற்சிக்கவும் (${lastError instanceof Error ? lastError.message : "parse error"})`);
 }
 
+function parseSceneKeywords(value: unknown, sceneCount: number): string[][] {
+  if (!Array.isArray(value)) return [];
+  const groups = value
+    .map((group) => (Array.isArray(group) ? group.filter((term): term is string => typeof term === "string" && term.trim().length > 0).map((term) => term.trim()).slice(0, 4) : []))
+    .filter((group) => group.length > 0);
+  return groups.slice(0, sceneCount);
+}
+
+const sceneKeywordsInstruction = (sceneCount: number) =>
+  `,"sceneKeywords":[["keyword1","keyword2"]]} — sceneKeywords-ல் script-ஐ காலவரிசைப்படி சரியாக ${sceneCount} பகுதிகளாக பிரித்து, ஒவ்வொரு பகுதியிலும் அப்போது பேசப்படும் விஷயத்துக்கு பொருத்தமான 2-3 English keywords கொடுக்கவும் (searchTerms-ஐ போலவே stock video தேட ஏற்ற English சொற்கள், script மொழியில் அல்ல). சரியாக ${sceneCount} groups இருக்க வேண்டும்`;
+
 export const geminiReviewProvider: ReviewProvider = {
-  async createTamilScript(prompt) {
-    const result = await requestJson<{ title?: unknown; script?: unknown; searchTerms?: unknown }>(["gemini-3.5-flash", "gemini-2.5-flash"], `${prompt}\n\nJSON மட்டும் பதிலளிக்கவும் (strings-க்குள் newlines-ஐ \\n ஆக escape செய்யவும்): {"title":"...","script":"...","searchTerms":["English keyword"]}`, 0.8);
+  async createTamilScript(prompt, sceneCount) {
+    const result = await requestJson<{ title?: unknown; script?: unknown; searchTerms?: unknown; sceneKeywords?: unknown }>(["gemini-3.5-flash", "gemini-2.5-flash"], `${prompt}\n\nJSON மட்டும் பதிலளிக்கவும் (strings-க்குள் newlines-ஐ \\n ஆக escape செய்யவும்): {"title":"...","script":"...","searchTerms":["English keyword"]${sceneKeywordsInstruction(sceneCount)}`, 0.8);
     const title = typeof result.title === "string" ? result.title.trim() : "";
     const script = typeof result.script === "string" ? result.script.trim() : "";
     const searchTerms = Array.isArray(result.searchTerms) ? result.searchTerms.filter((term): term is string => typeof term === "string" && term.trim().length > 0).map((term) => term.trim()).slice(0, 10) : [];
+    const sceneKeywords = parseSceneKeywords(result.sceneKeywords, sceneCount);
     if (!title || !script) throw new Error("Gemini பதிலில் title அல்லது script இல்லை");
-    return { title, script, searchTerms };
+    return { title, script, searchTerms, sceneKeywords };
   },
 };
 
-export async function createVideoMetadata(script: string, language: OutputLanguage = "ta"): Promise<{ title: string; searchTerms: string[] }> {
-  const result = await requestJson<{ title?: unknown; searchTerms?: unknown }>(["gemini-3.5-flash", "gemini-2.5-flash"], `கீழே உள்ள ${languageNames[language]} voice-over script-க்கு பொருத்தமான ${languageNames[language]} தலைப்பும், stock video தேட 5 English keywords-உம் மட்டும் கொடுக்கவும் (title script மொழியிலேயே இருக்க வேண்டும், searchTerms எப்போதும் English). Script-ஐ மாற்ற வேண்டாம்.\n\nScript:\n${script}\n\nJSON மட்டும் பதிலளிக்கவும்: {"title":"...","searchTerms":["English keyword"]}`, 0.4);
+export async function createVideoMetadata(script: string, language: OutputLanguage = "ta", sceneCount = 1): Promise<{ title: string; searchTerms: string[]; sceneKeywords: string[][] }> {
+  const result = await requestJson<{ title?: unknown; searchTerms?: unknown; sceneKeywords?: unknown }>(["gemini-3.5-flash", "gemini-2.5-flash"], `கீழே உள்ள ${languageNames[language]} voice-over script-க்கு பொருத்தமான ${languageNames[language]} தலைப்பும், stock video தேட 5 English keywords-உம் மட்டும் கொடுக்கவும் (title script மொழியிலேயே இருக்க வேண்டும், searchTerms எப்போதும் English). Script-ஐ மாற்ற வேண்டாம்.\n\nScript:\n${script}\n\nJSON மட்டும் பதிலளிக்கவும்: {"title":"...","searchTerms":["English keyword"]${sceneKeywordsInstruction(sceneCount)}`, 0.4);
   const title = typeof result.title === "string" ? result.title.trim() : "";
   const searchTerms = Array.isArray(result.searchTerms) ? result.searchTerms.filter((term): term is string => typeof term === "string" && term.trim().length > 0).map((term) => term.trim()).slice(0, 10) : [];
+  const sceneKeywords = parseSceneKeywords(result.sceneKeywords, sceneCount);
   if (!title) throw new Error("Gemini metadata-ல் title இல்லை");
-  return { title, searchTerms };
+  return { title, searchTerms, sceneKeywords };
 }
 
 function pcmToWav(pcm: Buffer, sampleRate = 24000) {

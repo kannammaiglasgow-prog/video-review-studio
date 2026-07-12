@@ -2,7 +2,7 @@ import type { OutputLanguage } from "@/lib/config";
 import { createVideoMetadata } from "./gemini";
 
 // Pexels/Pixabay-க்கு English queries மட்டும் நல்ல results தரும் — local mode-ல் Tamil/Hindi-ஐ English-ஆக மொழிபெயர்க்க முடியாது.
-// எனவே: custom English keywords (இருந்தால்) > generic safe English categories > (opt-in) Gemini.
+// எனவே scene-per-scene முன்னுரிமை: "|" custom scene groups > Gemini sceneKeywords (Premium) > local English segmentation > flat custom/generic (எல்லா scenes-க்கும் ஒரே terms).
 const genericFallback = ["people talking", "city lifestyle", "nature landscape", "technology abstract", "office work"];
 
 const stopWords: Record<OutputLanguage, Set<string>> = {
@@ -50,23 +50,58 @@ export function localTitleFromText(text: string, maxLength = 60) {
   return cleaned.length < trimmed.length ? `${cleaned}…` : cleaned || "Video";
 }
 
-export async function resolveStockKeywords(options: {
+export function alignSceneCount<T>(items: T[], count: number): T[] {
+  if (!items.length || count <= 0) return [];
+  return Array.from({ length: count }, (_, index) => items[index % items.length]);
+}
+
+// "temple architecture | election crowd | tamil politics" — ஒவ்வொரு "|" group-உம் ஒரு scene range-க்கு
+export function parseSceneGroups(customKeywords: string | undefined): string[][] | null {
+  if (!customKeywords || !customKeywords.includes("|")) return null;
+  const groups = customKeywords
+    .split("|")
+    .map((group) => group.split(",").map((term) => term.trim()).filter(Boolean))
+    .filter((group) => group.length > 0);
+  return groups.length ? groups : null;
+}
+
+function distributeGroupsToScenes(groups: string[][], sceneCount: number): string[][] {
+  if (!groups.length || sceneCount <= 0) return [];
+  const perGroup = Math.ceil(sceneCount / groups.length);
+  return Array.from({ length: sceneCount }, (_, index) => groups[Math.min(groups.length - 1, Math.floor(index / perGroup))]);
+}
+
+export async function resolveSceneKeywords(options: {
   script: string;
   language: OutputLanguage;
+  sceneCount: number;
   customKeywords?: string;
   allowGemini: boolean;
-}): Promise<{ searchTerms: string[]; source: "custom" | "gemini" | "generic" }> {
-  const custom = (options.customKeywords || "").split(/[,\n]/).map((term) => term.trim()).filter(Boolean);
-  if (custom.length) return { searchTerms: custom.slice(0, 10), source: "custom" };
+  geminiSceneKeywords?: string[][];
+}): Promise<{ sceneSearchTerms: string[][]; source: "custom-scenes" | "gemini" | "local-english" | "custom-flat" | "generic" }> {
+  const { sceneCount } = options;
+
+  const sceneGroups = parseSceneGroups(options.customKeywords);
+  if (sceneGroups) return { sceneSearchTerms: distributeGroupsToScenes(sceneGroups, sceneCount), source: "custom-scenes" };
+
+  if (options.geminiSceneKeywords?.length) return { sceneSearchTerms: alignSceneCount(options.geminiSceneKeywords, sceneCount), source: "gemini" };
+
+  if (options.language === "en") {
+    const localScenes = segmentScenes(options.script, sceneCount, "en");
+    if (localScenes.some((words) => words.length)) return { sceneSearchTerms: localScenes.map((words) => (words.length ? words : genericFallback)), source: "local-english" };
+  }
 
   if (options.allowGemini) {
     try {
-      const metadata = await createVideoMetadata(options.script, options.language);
-      if (metadata.searchTerms?.length) return { searchTerms: metadata.searchTerms, source: "gemini" };
+      const metadata = await createVideoMetadata(options.script, options.language, sceneCount);
+      if (metadata.sceneKeywords?.length) return { sceneSearchTerms: alignSceneCount(metadata.sceneKeywords, sceneCount), source: "gemini" };
+      if (metadata.searchTerms?.length) return { sceneSearchTerms: Array.from({ length: sceneCount }, () => metadata.searchTerms), source: "gemini" };
     } catch {
       // Gemini தோல்வியடைந்தால் generic fallback-க்கு தொடரவும் — voiceover mode Gemini இல்லாமல் இயங்க வேண்டும்
     }
   }
 
-  return { searchTerms: genericFallback, source: "generic" };
+  const flat = (options.customKeywords || "").split(/[,\n]/).map((term) => term.trim()).filter(Boolean);
+  const terms = flat.length ? flat : genericFallback;
+  return { sceneSearchTerms: Array.from({ length: sceneCount }, () => terms), source: flat.length ? "custom-flat" : "generic" };
 }

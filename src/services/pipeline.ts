@@ -3,8 +3,8 @@ import path from "node:path";
 import { database } from "@/lib/database";
 import { config, type OutputLanguage } from "@/lib/config";
 import { createVideoMetadata, geminiReviewProvider, geminiSpeechProvider } from "./providers/gemini";
-import { localTitleFromText, resolveStockKeywords } from "./providers/keywords";
-import { downloadStockMedia, searchStockMedia } from "./providers/stock-media";
+import { alignSceneCount, localTitleFromText, resolveSceneKeywords } from "./providers/keywords";
+import { downloadScenedStockMedia } from "./providers/stock-media";
 import { fetchNewsArticle } from "./providers/news";
 import { piperSpeechProvider } from "./providers/piper";
 import { selectTranscriptSegment, youtubeTranscriptProvider } from "./providers/transcript";
@@ -81,11 +81,12 @@ export async function processProject(projectId: number) {
   const updateStatus = (status: string) => db.prepare("UPDATE projects SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?").run(status, projectId);
   const projectDir = path.join(config.mediaRoot, String(projectId));
   const isVoiceover = project.source_type === "voiceover";
+  const orientation = project.aspect_ratio === "9:16" ? "portrait" : "landscape";
   try {
     let script: string;
     let title: string;
-    let searchTerms: string[];
     let audioPath: string;
+    let geminiSceneKeywords: string[][] = [];
 
     if (isVoiceover) {
       updateStatus("script");
@@ -96,11 +97,7 @@ export async function processProject(projectId: number) {
 
       updateStatus("tts");
       audioPath = project.audio_path; // ஏற்கனவே upload ஆனது — TTS தேவையில்லை, Gemini call இல்லை
-
-      updateStatus("stock-media");
       title = "Voice-over video";
-      const resolved = await resolveStockKeywords({ script, language: project.output_language, customKeywords: project.stock_keywords, allowGemini: project.tier !== "free" && Boolean(project.allow_gemini_keywords) });
-      searchTerms = resolved.searchTerms;
     } else {
       updateStatus("transcript");
       let transcript: string;
@@ -120,21 +117,24 @@ export async function processProject(projectId: number) {
       db.prepare("UPDATE projects SET transcript=? WHERE id=?").run(transcript, projectId);
 
       updateStatus("script");
-      let review: { title: string; script: string; searchTerms: string[] };
+      // Gemini call பண்ணும்போதே, script-ஐ எத்தனை scenes-ஆக பிரிக்கணும் என்ற estimate-ஐயும் அதே call-ல் கேட்டு, extra API call தவிர்க்கிறோம்
+      const estimatedSceneCount = requiredClipCount(durationToSeconds(project.duration));
       if (project.tier === "free") {
-        // Free tier-ல் Gemini call இல்லை — raw transcript-ஐயே script-ஆக பயன்படுத்தி, keywords-ஐ local-ஆக derive செய்யும்
-        const resolved = await resolveStockKeywords({ script: transcript, language: project.output_language, customKeywords: project.stock_keywords, allowGemini: false });
-        review = { title: localTitleFromText(transcript), script: transcript, searchTerms: resolved.searchTerms };
+        // Free tier-ல் Gemini call இல்லை — raw transcript-ஐயே script-ஆக பயன்படுத்தும்
+        script = transcript;
+        title = localTitleFromText(transcript);
       } else if (project.source_type === "text" && project.script_mode === "as-is") {
-        const metadata = await createVideoMetadata(transcript, project.output_language);
-        review = { title: metadata.title, script: transcript, searchTerms: metadata.searchTerms || [] };
+        const metadata = await createVideoMetadata(transcript, project.output_language, estimatedSceneCount);
+        script = transcript;
+        title = metadata.title;
+        geminiSceneKeywords = metadata.sceneKeywords || [];
       } else {
-        review = await geminiReviewProvider.createTamilScript(buildReviewPrompt({ transcript, stance: project.stance, tone: project.tone, persona: project.persona, duration: project.duration, customInstruction: project.custom_instruction, sourceType: project.source_type, sourceTitle, outputLanguage: project.output_language }));
+        const review = await geminiReviewProvider.createTamilScript(buildReviewPrompt({ transcript, stance: project.stance, tone: project.tone, persona: project.persona, duration: project.duration, customInstruction: project.custom_instruction, sourceType: project.source_type, sourceTitle, outputLanguage: project.output_language }), estimatedSceneCount);
+        script = review.script;
+        title = review.title;
+        geminiSceneKeywords = review.sceneKeywords || [];
       }
-      db.prepare("UPDATE projects SET review_script=? WHERE id=?").run(review.script, projectId);
-      script = review.script;
-      title = review.title;
-      searchTerms = review.searchTerms || [];
+      db.prepare("UPDATE projects SET review_script=? WHERE id=?").run(script, projectId);
 
       updateStatus("tts");
       await fs.mkdir(projectDir, { recursive: true });
@@ -142,17 +142,20 @@ export async function processProject(projectId: number) {
       const speechProvider = project.tts_provider === "gemini" ? geminiSpeechProvider : piperSpeechProvider;
       await speechProvider.synthesize(script, audioPath, project.voice, project.output_language);
       db.prepare("UPDATE projects SET audio_path=? WHERE id=?").run(audioPath, projectId);
-
-      updateStatus("stock-media");
     }
 
+    updateStatus("stock-media");
     await fs.mkdir(projectDir, { recursive: true });
     const targetDuration = await finalRenderDuration(project.duration, audioPath, isVoiceover || project.duration === AUTO_DURATION_LABEL);
     const requiredClips = requiredClipCount(targetDuration);
-    const searchTarget = requiredClips + Math.max(4, Math.ceil(requiredClips * 0.2));
-    const assets = await searchStockMedia(searchTerms, project.aspect_ratio === "9:16" ? "portrait" : "landscape", searchTarget);
-    db.prepare("UPDATE render_jobs SET stage='render',progress=70,payload=?,updated_at=CURRENT_TIMESTAMP WHERE project_id=?").run(JSON.stringify({ title, searchTerms, assets }), projectId);
-    const clipPaths = await downloadStockMedia(assets, path.join(projectDir, "stock"), requiredClips);
+    // ஒவ்வொரு 3-வினாடி scene-க்கும் அப்போது பேசப்படும் விஷயத்துக்கே பொருத்தமான தனி clip தேடி assign செய்யும் — positional-ஆக இல்லை
+    const { sceneSearchTerms } = await resolveSceneKeywords({
+      script, language: project.output_language, sceneCount: requiredClips, customKeywords: project.stock_keywords,
+      allowGemini: project.tier !== "free" && (isVoiceover ? Boolean(project.allow_gemini_keywords) : true),
+      geminiSceneKeywords,
+    });
+    const { files: clipPaths, assets } = await downloadScenedStockMedia(sceneSearchTerms, orientation, path.join(projectDir, "stock"));
+    db.prepare("UPDATE render_jobs SET stage='render',progress=70,payload=?,updated_at=CURRENT_TIMESTAMP WHERE project_id=?").run(JSON.stringify({ title, sceneSearchTerms, assets }), projectId);
     if (clipPaths.length < requiredClips) throw new Error(`${requiredClips} தனித்தனி copyright-safe clips தேவை; ${clipPaths.length} மட்டும் download ஆனது`);
 
     updateStatus("render");
@@ -188,12 +191,12 @@ export async function rerenderProject(projectId: number) {
   const requiredClips = requiredClipCount(targetDuration);
   if (clipPaths.length < requiredClips) {
     const job = db.prepare("SELECT payload FROM render_jobs WHERE project_id=? ORDER BY id DESC LIMIT 1").get(projectId) as { payload: string | null } | undefined;
-    let payload: { title?: string; searchTerms?: string[]; assets?: import("./providers/types").StockAsset[] } = {};
+    let payload: { title?: string; sceneSearchTerms?: string[][] } = {};
     try { payload = job?.payload ? JSON.parse(job.payload) : {}; } catch { payload = {}; }
-    const savedAssets = Array.isArray(payload.assets) ? payload.assets : [];
-    const terms = Array.isArray(payload.searchTerms) && payload.searchTerms.length ? payload.searchTerms : [payload.title || "people lifestyle", "technology", "city", "nature"];
-    const freshAssets = savedAssets.length >= requiredClips ? savedAssets : await searchStockMedia(terms, project.aspect_ratio === "9:16" ? "portrait" : "landscape", requiredClips + Math.max(4, Math.ceil(requiredClips * 0.2)));
-    clipPaths = await downloadStockMedia(freshAssets, path.join(config.mediaRoot, String(projectId), "stock"), requiredClips);
+    const savedScenes = Array.isArray(payload.sceneSearchTerms) ? payload.sceneSearchTerms : [];
+    const sceneSearchTerms = savedScenes.length ? alignSceneCount(savedScenes, requiredClips) : Array.from({ length: requiredClips }, () => [payload.title || "people lifestyle", "technology", "city", "nature"]);
+    const { files } = await downloadScenedStockMedia(sceneSearchTerms, project.aspect_ratio === "9:16" ? "portrait" : "landscape", path.join(config.mediaRoot, String(projectId), "stock"));
+    clipPaths = files;
   }
   if (clipPaths.length < requiredClips) throw new Error(`${requiredClips} தனித்தனி clips தேவை; ${clipPaths.length} மட்டும் கிடைத்தது`);
   db.prepare("UPDATE projects SET status='render',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(projectId);

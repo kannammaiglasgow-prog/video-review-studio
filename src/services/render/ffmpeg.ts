@@ -6,7 +6,7 @@ import { probeAudioDuration } from "./ffprobe";
 
 export type RenderSpec = { aspectRatio: "9:16" | "16:9"; audioPath: string; clips: string[]; subtitlePath?: string; outputPath: string; targetDuration: number };
 
-export const CLIP_DURATION_SECONDS = 6;
+export const CLIP_DURATION_SECONDS = 3;
 
 export function requiredClipCount(duration: number) {
   return Math.max(1, Math.ceil(duration / CLIP_DURATION_SECONDS));

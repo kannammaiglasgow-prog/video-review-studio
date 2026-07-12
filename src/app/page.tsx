@@ -82,7 +82,7 @@ export default function Home() {
   const setTier = (tier: "free" | "premium") => setForm((current) => ({ ...current, tier, ttsProvider: tier === "free" ? "local" : current.ttsProvider, scriptMode: tier === "free" ? "as-is" : current.scriptMode, allowGeminiKeywords: tier === "free" ? false : current.allowGeminiKeywords }));
   const videoUrl = projectId ? `/api/projects/${projectId}/video${videoVersion ? `?v=${videoVersion}` : ""}` : "";
   const currentClip = editingClip !== null ? clips.find((clip) => clip.index === editingClip) : undefined;
-  const sceneCount = audioDurationSeconds ? Math.max(1, Math.ceil((audioDurationSeconds + 2) / 6)) : null;
+  const sceneCount = audioDurationSeconds ? Math.max(1, Math.ceil((audioDurationSeconds + 2) / 3)) : null;
 
   function pickAudioFile(file: File) {
     setAudioFile(file);
@@ -302,13 +302,13 @@ export default function Home() {
             </div>}
             <p className="text-xs text-slate-400">{form.tier === "free" ? "Free tier-ல் script AI-ஆல் மாற்றப்படாது — நீங்கள் எழுதியதே அப்படியே voice-over ஆகும் (Gemini call இல்லை)." : form.scriptMode === "as-is" ? "நீங்கள் எழுதியதை மாற்றாமல் அப்படியே வாசிக்கும் — நிலைப்பாடு/tone script-ஐ பாதிக்காது." : "உங்கள் உரையை அடிப்படையாகக் கொண்டு, தேர்ந்தெடுத்த நிலைப்பாடு மற்றும் tone-ல் AI புதிய தமிழ் script எழுதும்."}</p>
           </>}
-          {form.tier === "free" && form.sourceType !== "voiceover" && <label className="block"><span className="field-label">English stock keywords (விருப்பம்)</span><input className="text-input" placeholder="உதா: city traffic, temple, nature — comma-ஆல் பிரிக்கவும்" value={form.stockKeywords} onChange={(e) => set("stockKeywords", e.target.value)} /></label>}
+          {form.tier === "free" && form.sourceType !== "voiceover" && <label className="block"><span className="field-label">English stock keywords (விருப்பம்)</span><input className="text-input" placeholder="ஒரே terms எல்லா scenes-க்கும்: city, temple. Scene-வாரியா: temple crowd | election rally | tamil politics" value={form.stockKeywords} onChange={(e) => set("stockKeywords", e.target.value)} /><span className="mt-1 block text-xs text-slate-400">&quot;|&quot; வைத்து பிரிச்சா, ஒவ்வொரு group-உம் video-வின் அந்தந்த பகுதிக்கான scenes-க்கு பயன்படும்.</span></label>}
           {form.sourceType === "voiceover" && <>
             <label className="block"><span className="field-label">Voice-over audio file</span><div className="flex flex-wrap items-center gap-2"><button type="button" className="choice" onClick={() => audioFileInput.current?.click()}>{audioFile ? "🔁 வேறு file தேர்வு செய்" : "⬆️ Audio file upload"}</button>{audioFile && <span className="text-xs text-slate-400">{audioFile.name} {audioDurationSeconds !== null && `· ${audioDurationSeconds.toFixed(1)}s`}</span>}</div><input ref={audioFileInput} type="file" accept="audio/*,.wav,.mp3,.m4a,.ogg,.flac" className="hidden" onChange={(e) => { const file = e.target.files?.[0]; if (file) pickAudioFile(file); e.target.value = ""; }} /></label>
             <label className="block"><span className="field-label">இந்த audio-வின் சரியான script (word-to-word)</span><textarea required className="text-input min-h-40 resize-y" placeholder="Audio-வில் பேசப்படும் script-ஐ சரியாக இங்கே paste செய்யவும்..." value={form.sourceText} onChange={(e) => set("sourceText", e.target.value)} /></label>
-            <label className="block"><span className="field-label">English stock keywords (விருப்பம்)</span><input className="text-input" placeholder="உதா: city traffic, temple, nature — comma-ஆல் பிரிக்கவும்" value={form.stockKeywords} onChange={(e) => set("stockKeywords", e.target.value)} /></label>
+            <label className="block"><span className="field-label">English stock keywords (விருப்பம்)</span><input className="text-input" placeholder="ஒரே terms எல்லா scenes-க்கும்: city, temple. Scene-வாரியா: temple crowd | election rally | tamil politics" value={form.stockKeywords} onChange={(e) => set("stockKeywords", e.target.value)} /><span className="mt-1 block text-xs text-slate-400">&quot;|&quot; வைத்து பிரிச்சா, ஒவ்வொரு group-உம் video-வின் அந்தந்த பகுதிக்கான scenes-க்கு பயன்படும்.</span></label>
             {form.tier === "premium" && <label className="flex items-center gap-2 text-sm text-slate-300"><input type="checkbox" checked={form.allowGeminiKeywords} onChange={(e) => setForm((current) => ({ ...current, allowGeminiKeywords: e.target.checked }))} /> Improve stock search using Gemini <span className="text-xs text-amber-300/80">(API கட்டணம் உண்டு — default OFF)</span></label>}
-            {sceneCount !== null && <p className="text-xs text-emerald-300/80">≈ {sceneCount} unique 6-second scenes இந்த audio-க்கு தேவைப்படும்.</p>}
+            {sceneCount !== null && <p className="text-xs text-emerald-300/80">≈ {sceneCount} unique 3-second scenes இந்த audio-க்கு தேவைப்படும்.</p>}
             <p className="text-xs text-slate-400">இந்த மோட்-ல் Gemini script/TTS எதுவும் call ஆகாது — உங்கள் audio + script-ஐயே நேரடியாக video-ஆக render செய்யும்.</p>
           </>}
         </section>

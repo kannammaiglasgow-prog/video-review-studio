@@ -98,38 +98,68 @@ export async function searchStockMedia(terms: string[], orientation: "portrait" 
   return [...unique.values()];
 }
 
-export async function downloadStockMedia(assets: StockAsset[], directory: string, desiredCount = assets.length) {
+function assetKey(asset: StockAsset) {
+  return `${asset.provider}:${asset.kind || "video"}:${asset.id}`;
+}
+
+const genericSceneTerms = ["people lifestyle", "city", "technology", "nature", "abstract background"];
+
+// ஒவ்வொரு scene index-க்கும் அதற்கே ஏற்ற terms-ஐ வைத்து தனித்தனியா தேடி, முழு video-க்குமான global uniqueness-ஐ பராமரிக்கும்.
+// ஒரு scene-க்கு download தோல்வியடைந்தால், அதே scene index-க்கே மற்றொரு candidate-ஐ முயற்சிக்கும் — clip எண்ணிக்கை scene index-உடன் shift ஆகாது.
+export async function downloadScenedStockMedia(sceneSearchTerms: string[][], orientation: "portrait" | "landscape", directory: string) {
+  const sceneCount = sceneSearchTerms.length;
   await fs.mkdir(directory, { recursive: true });
   const staging = path.join(directory, `.download-${Date.now()}`);
   await fs.mkdir(staging, { recursive: true });
-  const files: string[] = [];
-  for (let index = 0; index < assets.length; index += 1) {
-    if (files.length >= desiredCount) break;
-    try {
-      const response = await fetch(assets[index].url, { signal: AbortSignal.timeout(120_000) });
-      if (!response.ok) continue;
-      const data = Buffer.from(await response.arrayBuffer());
-      const detectedImage = assets[index].kind === "image" ? detectImageType(data) : null;
-      if (assets[index].kind === "image" && !detectedImage) continue;
-      const extension = detectedImage ? imageExtension(detectedImage) : ".mp4";
-      const filePath = path.join(staging, `stock-${files.length}${extension}`);
-      await fs.writeFile(filePath, data);
-      files.push(filePath);
-    } catch { continue; }
+  const used = new Set<string>();
+  const searchCache = new Map<string, StockAsset[]>();
+  const files: (string | null)[] = new Array(sceneCount).fill(null);
+
+  const searchCached = async (terms: string[]) => {
+    const key = terms.join("|");
+    if (searchCache.has(key)) return searchCache.get(key)!;
+    const results = await searchStockMedia(terms, orientation, 10).catch(() => [] as StockAsset[]);
+    searchCache.set(key, results);
+    return results;
+  };
+
+  const assetPool = new Map<string, StockAsset>();
+
+  for (let index = 0; index < sceneCount; index += 1) {
+    const terms = sceneSearchTerms[index]?.length ? sceneSearchTerms[index] : genericSceneTerms;
+    const candidates = [...(await searchCached(terms)), ...(await searchCached(genericSceneTerms))];
+    for (const candidate of candidates) if (assetPool.size < 40) assetPool.set(assetKey(candidate), candidate);
+    for (const candidate of candidates) {
+      if (used.has(assetKey(candidate))) continue;
+      try {
+        const response = await fetch(candidate.url, { signal: AbortSignal.timeout(120_000) });
+        if (!response.ok) continue;
+        const data = Buffer.from(await response.arrayBuffer());
+        const detectedImage = candidate.kind === "image" ? detectImageType(data) : null;
+        if (candidate.kind === "image" && !detectedImage) continue;
+        const extension = detectedImage ? imageExtension(detectedImage) : ".mp4";
+        const filePath = path.join(staging, `stock-${index}${extension}`);
+        await fs.writeFile(filePath, data);
+        used.add(assetKey(candidate));
+        files[index] = filePath;
+        break;
+      } catch { continue; }
+    }
   }
-  if (files.length < desiredCount) {
+
+  if (files.some((file) => !file)) {
     await fs.rm(staging, { recursive: true, force: true });
-    return [];
+    return { files: [] as string[], assets: [...assetPool.values()] };
   }
   for (const file of await fs.readdir(directory)) {
     if (/^stock-\d+\.(mp4|jpe?g|png|webp)$/i.test(file)) await fs.rm(path.join(directory, file), { force: true });
   }
   const finalFiles: string[] = [];
   for (const stagedFile of files) {
-    const output = path.join(directory, path.basename(stagedFile));
-    await fs.rename(stagedFile, output);
+    const output = path.join(directory, path.basename(stagedFile as string));
+    await fs.rename(stagedFile as string, output);
     finalFiles.push(output);
   }
   await fs.rm(staging, { recursive: true, force: true });
-  return finalFiles;
+  return { files: finalFiles, assets: [...assetPool.values()] };
 }

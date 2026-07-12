@@ -8,7 +8,7 @@ export interface TranscriptProvider {
 }
 
 export interface ReviewProvider {
-  createTamilScript(prompt: string): Promise<{ title: string; script: string; searchTerms: string[] }>;
+  createTamilScript(prompt: string, sceneCount: number): Promise<{ title: string; script: string; searchTerms: string[]; sceneKeywords: string[][] }>;
 }
 
 export interface SpeechProvider {
