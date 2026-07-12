@@ -1,5 +1,13 @@
 # Handoff — Video Review Studio
 
+## Note to the next agent (read first)
+
+1. **The Free tier's zero-Gemini guarantee is the user's #1 concern.** They were charged unexpectedly earlier and are cost-sensitive. Never add a Gemini call to any Free-tier path, never let one slip in via a shared helper, and if you need to make even one Gemini call for *testing*, ask the user first — that's an explicit agreement from this session. The enforcement is server-side in `validation.ts` and tier-gated in `pipeline.ts`/`keywords.ts`; keep it that way.
+2. **This machine's Python defaults to cp1252, not UTF-8.** Anything that pipes Tamil/Hindi/Devanagari text into a Python subprocess needs `PYTHONUTF8=1` in the env or it silently corrupts to `?`/surrogates. Same trap applies to your own testing: passing Tamil text inline through Git-Bash `curl -d '...'` corrupts it before it leaves the shell — write the JSON body to a UTF-8 file and use `--data-binary @file` instead. This burned two test runs this session.
+3. **Verify claims against the DB, not the API response.** `data/review-studio.sqlite` (`projects` + `render_jobs.payload`) records what actually happened — which tier, which TTS provider, which per-scene search terms. Every fix this session was verified there, and it caught things the happy-path response hid.
+4. **The user works with multiple agents (Claude, Codex, Antigravity) on this repo.** Always start by checking `git log`/`git status` fresh — another agent may have moved the code since this doc was written.
+5. **User communication:** reply in Tamil (their standing preference), and ask before destructive/paid/irreversible actions. They respond well to being given clear options with a recommendation.
+
 ## Product goal
 
 Local-first AI video review generator for personal use. Inputs may be in any language; output script/voice/UI can be **Tamil, English, or Hindi** (user-selectable). A **Free / Premium** tier controls whether Gemini is used at all.
