@@ -21,6 +21,13 @@ const sourceOptions = [
 
 type StockResult = { provider: string; kind?: "video" | "image"; id: string; url: string; previewUrl?: string; width: number; height: number; attribution?: string };
 type Clip = { index: number; url: string; kind: "video" | "image" };
+type YoutubeStatus = { configured: boolean; connected: boolean; channel?: { id: string; title: string; thumbnail?: string; customUrl?: string } };
+
+const privacyOptions = [
+  { value: "private", label: "🔒 Private (நீங்கள் மட்டும்)" },
+  { value: "unlisted", label: "🔗 Unlisted (link உள்ளவர்கள்)" },
+  { value: "public", label: "🌍 Public (எல்லோரும்)" },
+];
 
 function ChoiceGroup({ label, name, value, onChange }: { label: string; name: ChoiceKey; value: string; onChange: (value: string) => void }) {
   return <fieldset className="space-y-3"><legend className="text-sm font-semibold text-slate-200">{label}</legend><div className="flex flex-wrap gap-2">{choices[name].map((item) => <button key={item} type="button" onClick={() => onChange(item)} className={`choice ${value === item ? "choice-active" : ""}`}>{item}</button>)}</div></fieldset>;
@@ -49,6 +56,12 @@ export default function Home() {
   const [uploading, setUploading] = useState(false);
   const [pendingRender, setPendingRender] = useState(false);
   const [rerendering, setRerendering] = useState(false);
+  const [ytStatus, setYtStatus] = useState<YoutubeStatus | null>(null);
+  const [ytTitle, setYtTitle] = useState("");
+  const [ytDescription, setYtDescription] = useState("");
+  const [ytPrivacy, setYtPrivacy] = useState("private");
+  const [ytUploading, setYtUploading] = useState(false);
+  const [ytResult, setYtResult] = useState<{ url: string; privacyStatus: string } | null>(null);
   const uploadInput = useRef<HTMLInputElement>(null);
   const previewClass = useMemo(() => form.format === "9:16" ? "aspect-[9/16] max-h-[540px]" : "aspect-video", [form.format]);
   const set = (key: string, value: string) => setForm((current) => ({ ...current, [key]: value }));
@@ -61,6 +74,19 @@ export default function Home() {
       const data = await response.json();
       setClips(data.clips || []);
     } catch { setClips([]); }
+    try {
+      const response = await fetch(`/api/projects/${id}/suggestions`);
+      const data = await response.json();
+      setSuggestions(data.results || []);
+      if (data.title) setYtTitle(data.title);
+    } catch { setSuggestions([]); }
+  }, []);
+
+  const loadYtStatus = useCallback(async () => {
+    try {
+      const response = await fetch("/api/youtube/status");
+      setYtStatus(await response.json());
+    } catch { setYtStatus(null); }
   }, []);
 
   useEffect(() => {
@@ -73,10 +99,14 @@ export default function Home() {
         loadClips(latest.id);
       }
     }).catch(() => undefined);
-  }, [loadClips]);
+    loadYtStatus();
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("yt") === "connected") { setMessage("YouTube channel இணைக்கப்பட்டது ✅"); window.history.replaceState(null, "", "/"); }
+    if (params.get("yt") === "error") { setMessage("YouTube இணைப்பு தோல்வியடைந்தது — மீண்டும் முயற்சிக்கவும்."); window.history.replaceState(null, "", "/"); }
+  }, [loadClips, loadYtStatus]);
 
   async function submit(event: FormEvent) {
-    event.preventDefault(); setStatus("saving"); setMessage(""); setProjectId(null); setClips([]); setEditingClip(null); setPendingRender(false); setSuggestions([]);
+    event.preventDefault(); setStatus("saving"); setMessage(""); setProjectId(null); setClips([]); setEditingClip(null); setPendingRender(false); setSuggestions([]); setYtResult(null); setYtTitle(""); setYtDescription("");
     try {
       const response = await fetch("/api/projects", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form) });
       const result = await response.json();
@@ -92,15 +122,21 @@ export default function Home() {
     } catch (error) { setStatus("error"); setMessage(error instanceof Error ? error.message : "எதிர்பாராத பிழை"); }
   }
 
-  async function openClipEditor(index: number) {
+  function openClipEditor(index: number) {
     setEditingClip(index); setSearchResults([]); setSearchQuery(""); setSearchTab("video");
-    if (projectId !== null && !suggestions.length) {
-      try {
-        const response = await fetch(`/api/projects/${projectId}/suggestions`);
-        const data = await response.json();
-        setSuggestions(data.results || []);
-      } catch { setSuggestions([]); }
-    }
+  }
+
+  async function uploadToYt() {
+    if (projectId === null || !ytTitle.trim()) { setMessage("YouTube title கொடுக்கவும்."); return; }
+    setYtUploading(true); setYtResult(null); setMessage("YouTube-க்கு upload ஆகிறது... (video அளவை பொறுத்து சில நிமிடங்கள் ஆகலாம்)");
+    try {
+      const response = await fetch(`/api/projects/${projectId}/youtube`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: ytTitle, description: ytDescription, privacy: ytPrivacy }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "YouTube upload தோல்வியடைந்தது");
+      setYtResult(data);
+      setMessage(`YouTube upload வெற்றி ✅ (${data.privacyStatus})`);
+    } catch (error) { setMessage(error instanceof Error ? error.message : "YouTube upload தோல்வியடைந்தது"); }
+    finally { setYtUploading(false); }
   }
 
   function closeClipEditor() {
@@ -184,7 +220,24 @@ export default function Home() {
         <section className="panel space-y-7"><div className="step-title"><span>2</span><div><h2>Review பாணியை வடிவமைக்கவும்</h2><p>AI எழுத வேண்டிய நிலைப்பாடு மற்றும் உணர்வு</p></div></div><ChoiceGroup label="நிலைப்பாடு" name="stance" value={form.stance} onChange={(v) => set("stance", v)} /><ChoiceGroup label="Tone" name="tone" value={form.tone} onChange={(v) => set("tone", v)} /><ChoiceGroup label="கதாபாத்திர பாணி" name="persona" value={form.persona} onChange={(v) => set("persona", v)} /><label className="block"><span className="field-label">கூடுதல் வழிமுறை (விருப்பம்)</span><textarea className="text-input min-h-24 resize-y" placeholder="உதாரணம்: தொடக்கத்தில் வலுவான hook சேர்க்கவும்..." value={form.customInstruction} onChange={(e) => set("customInstruction", e.target.value)} /></label></section>
         <section className="panel space-y-7"><div className="step-title"><span>3</span><div><h2>குரல் மற்றும் output</h2><p>Final video எப்படி இருக்க வேண்டும்?</p></div></div><ChoiceGroup label="தமிழ் குரல்" name="voice" value={form.voice} onChange={(v) => set("voice", v)} /><div className="space-y-3"><p className="text-sm font-semibold text-slate-200">Video வடிவம்</p><div className="grid gap-3 sm:grid-cols-2"><button type="button" onClick={() => set("format", "9:16")} className={`format-card ${form.format === "9:16" ? "format-active" : ""}`}><span className="portrait-icon"/><strong>Shorts / Reels</strong><small>9:16 · 1080 × 1920</small></button><button type="button" onClick={() => set("format", "16:9")} className={`format-card ${form.format === "16:9" ? "format-active" : ""}`}><span className="landscape-icon"/><strong>Normal video</strong><small>16:9 · 1920 × 1080</small></button></div></div><ChoiceGroup label="கால அளவு" name="duration" value={form.duration} onChange={(v) => set("duration", v)} /><p className="text-xs text-slate-400">குறிப்பு: voice-over சற்று நீளமானால் video-வும் voice முடியும் வரை நீளும் — பேச்சு நடுவில் வெட்டப்படாது.</p></section>
         <button disabled={status === "saving"} className="generate-button" type="submit"><span>{status === "saving" ? "தயாராகிறது..." : "Review video உருவாக்கு"}</span><b>→</b></button>{message && <div className={`status ${status === "error" ? "status-error" : ""}`}>{message}</div>}
-        {projectId !== null && <section className="panel space-y-4"><div className="step-title"><span>✓</span><div><h2>உங்கள் review video தயாராகிவிட்டது</h2><p>Preview செய்து MP4 file-ஐ சேமிக்கலாம்</p></div></div><video key={videoUrl} className="mx-auto max-h-[620px] w-full rounded-xl bg-black" src={videoUrl} controls playsInline /><a className="generate-button" href={`/api/projects/${projectId}/video?download=1`} download><span>MP4 video சேமிக்கவும்</span><b>↓</b></a></section>}
+        {projectId !== null && <section className="panel space-y-4"><div className="step-title"><span>✓</span><div><h2>உங்கள் review video தயாராகிவிட்டது</h2><p>Preview செய்து MP4 file-ஐ சேமிக்கலாம்</p></div></div><video key={videoUrl} className="mx-auto max-h-[620px] w-full rounded-xl bg-black" src={videoUrl} controls playsInline /><a className="generate-button" href={`/api/projects/${projectId}/video?download=1`} download><span>MP4 video சேமிக்கவும்</span><b>↓</b></a>
+          <div className="space-y-4 rounded-xl border border-red-400/20 bg-red-400/[.05] p-4">
+            <p className="text-sm font-semibold text-slate-200">📤 YouTube-க்கு upload</p>
+            {!ytStatus?.configured && <p className="text-xs leading-5 text-slate-400">YouTube upload செயல்பட <code className="rounded bg-white/10 px-1">YOUTUBE_CLIENT_ID</code> மற்றும் <code className="rounded bg-white/10 px-1">YOUTUBE_CLIENT_SECRET</code>-ஐ <code className="rounded bg-white/10 px-1">.env.local</code>-ல் சேர்த்து server-ஐ restart செய்யவும் (Google Cloud Console → OAuth client).</p>}
+            {ytStatus?.configured && !ytStatus.connected && <div className="space-y-2"><p className="text-xs text-slate-400">Google account-ல் ஒரு முறை அனுமதி கொடுத்தால் போதும் — அப்போது எந்த channel-க்கு upload செய்ய வேண்டும் என்பதையும் தேர்ந்தெடுக்கலாம்.</p><a className="choice choice-active inline-block" href="/api/youtube/auth">🔗 YouTube-உடன் இணை</a></div>}
+            {ytStatus?.connected && ytStatus.channel && <>
+              <div className="flex items-center justify-between gap-3 rounded-lg bg-white/5 p-3">
+                <div className="flex items-center gap-3">{ytStatus.channel.thumbnail && <img className="h-9 w-9 rounded-full" src={ytStatus.channel.thumbnail} alt="channel" />}<div><p className="text-sm font-semibold">{ytStatus.channel.title}</p>{ytStatus.channel.customUrl && <p className="text-xs text-slate-400">{ytStatus.channel.customUrl}</p>}</div></div>
+                <button type="button" className="choice text-xs" onClick={async () => { await fetch("/api/youtube/status", { method: "DELETE" }); loadYtStatus(); }}>வேறு channel</button>
+              </div>
+              <label className="block"><span className="field-label">Video title</span><input className="text-input" value={ytTitle} onChange={(e) => setYtTitle(e.target.value)} placeholder="Video-வின் தலைப்பு..." maxLength={100} /></label>
+              <label className="block"><span className="field-label">Description (விருப்பம் — காலியாக விட்டால் script பயன்படும்)</span><textarea className="text-input min-h-20 resize-y" value={ytDescription} onChange={(e) => setYtDescription(e.target.value)} placeholder="Video description..." /></label>
+              <div className="flex flex-wrap gap-2">{privacyOptions.map((option) => <button key={option.value} type="button" onClick={() => setYtPrivacy(option.value)} className={`choice ${ytPrivacy === option.value ? "choice-active" : ""}`}>{option.label}</button>)}</div>
+              <button type="button" onClick={uploadToYt} disabled={ytUploading} className="generate-button"><span>{ytUploading ? "Upload ஆகிறது..." : "YouTube-க்கு upload செய்"}</span><b>📤</b></button>
+              {ytResult && <div className="rounded-lg border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm">✅ Upload முடிந்தது ({ytResult.privacyStatus}) — <a className="font-semibold underline" href={ytResult.url} target="_blank" rel="noreferrer">{ytResult.url}</a><p className="mt-1 text-xs text-slate-400">Private-ஆக upload ஆனது; YouTube Studio-ல் சரிபார்த்து நீங்களே publish செய்யலாம்.</p></div>}
+            </>}
+          </div>
+        </section>}
         {projectId !== null && <section className="panel space-y-5"><div className="step-title"><span>✎</span><div><h2>Voice-over மற்றும் clips-ஐ சரிபார்க்கவும்</h2><p>Clip-ஐ click செய்தால் பெரிதாக பார்த்து மாற்றலாம்</p></div></div>
           <div><p className="field-label">Voice-over மட்டும் கேட்க</p><audio className="w-full" src={`/api/projects/${projectId}/audio`} controls preload="none" /></div>
           {clips.length > 0 && <div className="space-y-3"><p className="field-label">பயன்படுத்தப்பட்ட clips ({clips.length}) — மாற்ற ஒரு clip-ஐ click செய்யவும்</p><div className="grid grid-cols-2 gap-3 sm:grid-cols-3">{clips.map((clip) => <button key={clip.index} type="button" onClick={() => openClipEditor(clip.index)} className="group relative overflow-hidden rounded-lg border border-white/10 transition hover:border-white/40">{clip.kind === "image" ? <img className="aspect-video w-full bg-black object-cover" src={`${clip.url}?v=${clipVersion}`} alt={`clip ${clip.index + 1}`} /> : <video className="aspect-video w-full bg-black object-cover" src={`${clip.url}?v=${clipVersion}`} muted loop playsInline onMouseEnter={(e) => e.currentTarget.play().catch(() => undefined)} onMouseLeave={(e) => e.currentTarget.pause()} />}<span className="absolute bottom-1 left-1 rounded bg-black/70 px-2 py-0.5 text-xs">{clip.kind === "image" ? "🖼️" : "🎬"} Clip {clip.index + 1}</span><span className="absolute inset-0 flex items-center justify-center bg-black/50 text-sm font-semibold opacity-0 transition group-hover:opacity-100">மாற்று ✎</span></button>)}</div></div>}

@@ -11,7 +11,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
   try {
     const payload = row?.payload ? JSON.parse(row.payload) : {};
     const assets = Array.isArray(payload.assets) ? payload.assets : [];
-    return NextResponse.json({ results: assets.map((asset: Record<string, unknown>) => ({ ...asset, kind: "video" })).slice(0, 12) });
+    return NextResponse.json({ title: typeof payload.title === "string" ? payload.title : undefined, results: assets.map((asset: Record<string, unknown>) => ({ ...asset, kind: "video" })).slice(0, 12) });
   } catch {
     return NextResponse.json({ results: [] });
   }

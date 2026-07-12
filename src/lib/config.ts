@@ -14,6 +14,11 @@ export const config = {
     youtube: process.env.YOUTUBE_API_KEY,
     googleCloudProject: process.env.GOOGLE_CLOUD_PROJECT_ID,
   },
+  youtubeOAuth: {
+    clientId: process.env.YOUTUBE_CLIENT_ID,
+    clientSecret: process.env.YOUTUBE_CLIENT_SECRET,
+    tokenPath: path.resolve(root, process.env.YOUTUBE_TOKEN_PATH || "data/youtube-oauth.json"),
+  },
 };
 
 export function integrationStatus() {
