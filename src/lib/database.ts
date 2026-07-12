@@ -49,6 +49,11 @@ function migrate(db: DatabaseSync) {
     );
     INSERT OR IGNORE INTO migrations (id, name) VALUES (1, 'initial_review_studio');
   `);
+  const hasColumn = (name: string) => (db.prepare("SELECT COUNT(*) AS count FROM pragma_table_info('projects') WHERE name=?").get(name) as { count: number }).count > 0;
+  if (!hasColumn("source_type")) db.exec("ALTER TABLE projects ADD COLUMN source_type TEXT NOT NULL DEFAULT 'youtube'");
+  db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (2, 'add_source_type')");
+  if (!hasColumn("script_mode")) db.exec("ALTER TABLE projects ADD COLUMN script_mode TEXT NOT NULL DEFAULT 'rewrite'");
+  db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (3, 'add_script_mode')");
 }
 
 export function database() {

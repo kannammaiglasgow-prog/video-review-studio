@@ -20,7 +20,7 @@ export async function runFfmpeg(args: string[]) {
   });
 }
 
-function wavDuration(filePath: string) {
+export function wavDuration(filePath: string) {
   const size = fs.statSync(filePath).size;
   return Math.max(1, (size - 44) / (24000 * 2));
 }
@@ -42,7 +42,16 @@ export async function renderVideo(spec: RenderSpec) {
 
   for (let index = 0; index < spec.clips.length; index += 1) {
     const output = path.join(workDir, `scene-${index}.mp4`);
-    await runFfmpeg(["-stream_loop", "-1", "-i", spec.clips[index], "-t", sceneDuration.toFixed(3), "-vf", `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},fps=30,format=yuv420p`, "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", output]);
+    const isImage = /\.(jpe?g|png|webp)$/i.test(spec.clips[index]);
+    if (isImage) {
+      // Static image-க்கு Ken Burns: பெரிய canvas-ல் scale செய்து மெதுவாக zoom-in
+      const frames = Math.round(sceneDuration * 30);
+      const baseWidth = Math.round(width * 1.4 / 2) * 2;
+      const baseHeight = Math.round(height * 1.4 / 2) * 2;
+      await runFfmpeg(["-i", spec.clips[index], "-vf", `scale=${baseWidth}:${baseHeight}:force_original_aspect_ratio=increase,crop=${baseWidth}:${baseHeight},zoompan=z='min(1.0+0.0012*on,1.35)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=${frames}:s=${width}x${height}:fps=30,format=yuv420p`, "-frames:v", String(frames), "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", output]);
+    } else {
+      await runFfmpeg(["-stream_loop", "-1", "-i", spec.clips[index], "-t", sceneDuration.toFixed(3), "-vf", `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},fps=30,format=yuv420p`, "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "22", output]);
+    }
     normalized.push(output);
   }
 

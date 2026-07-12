@@ -1,5 +1,5 @@
 export type TranscriptSegment = { startMs: number; durationMs: number; text: string };
-export type StockAsset = { provider: "pexels" | "pixabay"; id: string; url: string; width: number; height: number; attribution?: string };
+export type StockAsset = { provider: "pexels" | "pixabay"; kind?: "video" | "image"; id: string; url: string; previewUrl?: string; width: number; height: number; attribution?: string };
 
 export interface TranscriptProvider {
   fetch(url: string): Promise<{ language: string; segments: TranscriptSegment[] }>;

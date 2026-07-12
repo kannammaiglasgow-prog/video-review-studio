@@ -55,6 +55,16 @@ export const geminiReviewProvider: ReviewProvider = {
   },
 };
 
+export async function createVideoMetadata(script: string): Promise<{ title: string; searchTerms: string[] }> {
+  const data = await requestWithFallback(["gemini-3.5-flash", "gemini-2.5-flash"], {
+    contents: [{ parts: [{ text: `கீழே உள்ள தமிழ் voice-over script-க்கு பொருத்தமான தலைப்பும், stock video தேட 5 English keywords-உம் மட்டும் கொடுக்கவும். Script-ஐ மாற்ற வேண்டாம்.\n\nScript:\n${script}\n\nJSON மட்டும் பதிலளிக்கவும்: {"title":"...","searchTerms":["English keyword"]}` }] }],
+    generationConfig: { responseMimeType: "application/json", temperature: 0.4 },
+  });
+  const text = data?.candidates?.[0]?.content?.parts?.map((part: { text?: string }) => part.text || "").join("");
+  if (!text) throw new Error("Gemini metadata திருப்பவில்லை");
+  return JSON.parse(text);
+}
+
 function pcmToWav(pcm: Buffer, sampleRate = 24000) {
   const header = Buffer.alloc(44);
   header.write("RIFF", 0); header.writeUInt32LE(36 + pcm.length, 4); header.write("WAVE", 8);

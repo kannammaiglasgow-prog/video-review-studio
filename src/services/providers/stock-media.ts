@@ -34,6 +34,35 @@ export const pixabayProvider: StockMediaProvider = {
   },
 };
 
+export async function searchStockImages(query: string, orientation: "portrait" | "landscape") {
+  const assets: StockAsset[] = [];
+  if (config.api.pexels) {
+    const url = new URL("https://api.pexels.com/v1/search");
+    url.searchParams.set("query", query); url.searchParams.set("orientation", orientation); url.searchParams.set("per_page", "8");
+    const response = await fetch(url, { headers: { Authorization: config.api.pexels } });
+    if (response.ok) {
+      const data = await response.json();
+      for (const photo of (data.photos || []) as { id: number; width: number; height: number; photographer?: string; src?: { original?: string; large2x?: string; large?: string } }[]) {
+        const full = photo.src?.large2x || photo.src?.original;
+        if (full) assets.push({ provider: "pexels", kind: "image", id: String(photo.id), url: full, previewUrl: photo.src?.large || full, width: photo.width, height: photo.height, attribution: photo.photographer });
+      }
+    }
+  }
+  if (config.api.pixabay) {
+    const url = new URL("https://pixabay.com/api/");
+    url.searchParams.set("key", config.api.pixabay); url.searchParams.set("q", query); url.searchParams.set("per_page", "8");
+    url.searchParams.set("image_type", "photo"); url.searchParams.set("orientation", orientation === "portrait" ? "vertical" : "horizontal");
+    const response = await fetch(url);
+    if (response.ok) {
+      const data = await response.json();
+      for (const hit of (data.hits || []) as { id: number; imageWidth: number; imageHeight: number; user?: string; largeImageURL?: string; webformatURL?: string }[]) {
+        if (hit.largeImageURL) assets.push({ provider: "pixabay", kind: "image", id: String(hit.id), url: hit.largeImageURL, previewUrl: hit.webformatURL || hit.largeImageURL, width: hit.imageWidth, height: hit.imageHeight, attribution: hit.user });
+      }
+    }
+  }
+  return assets;
+}
+
 export async function searchStockMedia(terms: string[], orientation: "portrait" | "landscape") {
   const assets: StockAsset[] = [];
   for (const term of terms.slice(0, 5)) {
