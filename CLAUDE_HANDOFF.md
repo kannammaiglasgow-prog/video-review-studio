@@ -1,131 +1,96 @@
-# Claude Handoff — Video Review Studio
+# Handoff — Video Review Studio
 
 ## Product goal
 
-Local-first Tamil AI video review generator for personal use. Inputs may be in any language; UI, review script, and speech output are Tamil.
+Local-first AI video review generator for personal use. Inputs may be in any language; output script/voice/UI can be **Tamil, English, or Hindi** (user-selectable). A **Free / Premium** tier controls whether Gemini is used at all.
 
 Workflow:
 
-`YouTube/news/text → extraction → selected segment → review analysis → Tamil script → Local Piper or Gemini TTS → copyright-safe stock media → FFmpeg MP4 → optional YouTube upload`
+`YouTube/news/text/own-voiceover → extraction → review analysis (or raw, Free tier) → script → Local Piper or Gemini TTS (or user-uploaded audio) → per-scene copyright-safe stock media → FFmpeg MP4 → optional YouTube upload`
 
-## Current state
+## Current state (as of commit `f2164c0`)
 
-The Gemini workflow has produced playable MP4 files end-to-end on Windows. Local Piper is now the default zero-API-cost TTS choice, and Gemini TTS remains an explicit paid choice in the UI.
+Working tree clean. `a79423c` and `5f05c85` are already pushed to `origin/main`; `d05ba23` and `f2164c0` are being pushed together with this handoff update. Local Piper TTS blocker from the previous handoff is **resolved**:
 
-Local Piper files are installed and intentionally ignored by Git:
+- VC++ 2015–2022 x64 Redistributable installed (was missing, caused the `onnxruntime_pybind11_state` DLL error).
+- A second, previously-undiscovered bug also existed: Python defaults to `cp1252` on this Windows machine, so Tamil/Hindi UTF-8 text piped to Piper's stdin got corrupted. Fixed by setting `PYTHONUTF8=1` / `PYTHONIOENCODING=utf-8` on the spawned process in `piper.ts` and `scripts/test-local-tts.mjs`.
+- Local Piper now has voices for **all three languages**: `ta_IN-rasa_female-medium`, `en_US-lessac-medium`, `hi_IN-rohan-medium` (all from `huggingface.co/rhasspy/piper-voices`, all free, all gitignored under `models/piper/`).
 
-- `.venv-local-tts/Scripts/piper.exe`
-- `models/piper/ta_IN-rasa_female-medium.onnx`
-- `models/piper/ta_IN-rasa_female-medium.onnx.json`
+## Implemented this session (on top of the previous MVP)
 
-Local TTS smoke test currently reaches Piper but fails importing `onnxruntime_pybind11_state` with `ImportError: DLL load failed`. This normally requires installing or repairing Microsoft Visual C++ 2015–2022 Redistributable x64. Do not silently use paid Gemini when Local is selected.
+- **Ready-made voice-over mode** (`sourceType: "voiceover"`): user uploads a finished WAV/MP3/M4A/OGG/FLAC + pastes the exact script. File is validated by signature (not extension) + `ffprobe`, never by trusting the client. Zero Gemini calls possible in this mode.
+- **Tri-lingual output** (`output_language`: `ta`/`en`/`hi`) — script generation prompts, TTS reading instructions, and Local Piper model selection are all language-parameterized.
+- **Auto duration** — a duration option where the video plays exactly as long as the voice-over (+2s tail), no fixed preset floor.
+- **Free / Premium tier** (`tier` column, default `'premium'` at the DB level but the UI defaults new projects to **Free**): Free tier is guaranteed zero-Gemini, enforced **server-side** in `validation.ts` (forces `ttsProvider=local`, `allowGeminiKeywords=false` regardless of client payload) — not just a UI toggle. Verified by deliberately sending a tampered payload and confirming the server overrides it.
+- **Per-scene stock clip matching** — this was the biggest correctness fix. Previously clips were assigned *positionally* from one global keyword pool (scene N got whatever the Nth search result happened to be, unrelated to what was being said). Now every scene gets its own targeted search:
+  - Premium: the same Gemini call that writes the script also returns a per-scene English keyword breakdown (no extra API cost), aligned to the real scene count afterward via proportional-position mapping (not modulo wraparound, which caused an abrupt "restart" partway through).
+  - Free + English: local per-scene word extraction (no Gemini) using each scene's *actual* sentence text.
+  - Free + Tamil/Hindi (or manual override, any tier): new `"|"`-separated syntax in the stock-keywords field — `temple crowd | election rally | forest` — assigns each group proportionally across scenes.
+  - **Theme consistency**: a global "theme word" extraction (most-repeated content words across the whole script) is blended into every scene's search terms, so an ambiguous word like "babies" in a shark-themed video stays anchored to "sharks" instead of drifting to unrelated results like puppies. Gemini's prompt also explicitly instructs this.
+- **Sentence-boundary-aware scene timing** — replaced the fixed 3-second cadence with `buildScenePlan()`: splits the script into real sentences, estimates each one's duration proportional to word count against the actual measured audio length. Short sentences merge into a shared scene (2s floor); long sentences auto-split into multiple ~3s scenes instead of one static clip. Cuts now land on sentence boundaries.
+- **Pre-existing duration bug fixed**: `wavDuration()` hardcoded a 24kHz sample-rate assumption to estimate audio length from file size — wrong for Local Piper's actual 22050Hz output (~8% underestimate) and completely broken for compressed formats (MP3/M4A, relevant to the new voiceover-upload mode). Replaced everywhere with real `ffprobe`-based duration (`src/services/render/ffprobe.ts`).
 
-## Implemented
+## Important files (new/changed this session)
 
-- Next.js 16.2.10 App Router, React 19, TypeScript, Tailwind CSS 4
-- YouTube standard/Shorts, public news URL, and pasted-text inputs
-- YouTube segment selection with `MM:SS` or `HH:MM:SS`
-- Tamil stance, tone, persona, voice, duration, and 9:16/16:9 controls
-- Output presets from 15 seconds to 10 minutes
-- SQLite via Node 24 `node:sqlite`; migration 4 adds `projects.tts_provider`
-- Gemini script generation with retry, model fallback, balanced JSON extraction, repair, and schema checks
-- Local Piper Tamil female voice and selectable Gemini TTS
-- Pexels/Pixabay video and image search with provider/id deduplication
-- One unique visual for every six seconds: `ceil(finalDuration / 6)`; no cycling/repetition
-- Atomic stock downloads that preserve existing clips on insufficient results
-- Clip preview, search, replacement/upload, and rerender
-- FFmpeg normalization/render; final duration is `max(requested, audio + 2s)`
-- MP4 range streaming, player, audio preview, and download
-- Google OAuth YouTube upload with CSRF state validation and streamed uploads
-- Thumbnail upload or video-frame extraction with file-signature validation
-- Public-only news fetching with DNS/private-IP and redirect protections
-
-## Important files
-
-- `src/app/page.tsx` — Tamil UI and client workflow
-- `src/app/api/projects/route.ts` — create/list projects
-- `src/app/api/projects/[id]/process/route.ts` — processing entrypoint
-- `src/app/api/projects/[id]/clips/*` — clip preview/replacement
-- `src/app/api/projects/[id]/thumbnail/route.ts` — thumbnail management
-- `src/app/api/projects/[id]/youtube/route.ts` — YouTube upload
-- `src/app/api/youtube/*` — OAuth lifecycle
-- `src/lib/config.ts` — paths and integrations
-- `src/lib/database.ts` — SQLite schema/bootstrap migrations
-- `src/lib/validation.ts` — request validation
-- `src/services/pipeline.ts` — orchestration and duration logic
-- `src/services/providers/gemini.ts` — review and Gemini TTS
-- `src/services/providers/piper.ts` — local Piper integration
-- `src/services/providers/news.ts` — safe public article fetching
-- `src/services/providers/stock-media.ts` — asset search/download
-- `src/services/render/ffmpeg.ts` — six-second unique-scene rendering
-- `scripts/test-local-tts.mjs` — UTF-8-safe Piper smoke test
+- `src/services/pipeline.ts` — orchestration; now builds a scene plan and resolves per-scene keywords before rendering
+- `src/services/providers/sentences.ts` — **new**: sentence splitting + variable scene-duration planning
+- `src/services/providers/keywords.ts` — **new**: per-scene keyword resolution (custom groups / Gemini / local-English / generic), theme-word extraction, local title derivation
+- `src/services/providers/stock-media.ts` — `downloadScenedStockMedia()` replaces the old flat `searchStockMedia`+`downloadStockMedia` pairing; per-scene targeted search with global uniqueness
+- `src/services/render/ffmpeg.ts` — `renderVideo()` now takes `{ path, seconds }[]` scenes with individual durations instead of a fixed `CLIP_DURATION_SECONDS` cadence (constant still exists, now just the "ideal" chunk size used by sentence splitting/Gemini's upfront estimate)
+- `src/services/render/ffprobe.ts` — **new**: real audio duration via `ffprobe`, replacing the old byte-size estimate
+- `src/lib/audio.ts` — **new**: audio file-signature detection (WAV/MP3/M4A/OGG/FLAC)
+- `src/lib/validation.ts` — `Tier`, `OutputLanguage` types; Free-tier enforcement lives here
+- `src/lib/config.ts` — `ffprobePath`, per-language Piper model paths (`config.piper.models.{ta,en,hi}`)
+- `src/lib/database.ts` — migrations 5 (`add_voiceover_mode`: `stock_keywords`, `allow_gemini_keywords`) and 6 (`add_tier`: `tier`)
+- `src/services/providers/gemini.ts` — `createTamilScript`/`createVideoMetadata` now take a `sceneCount` and return `sceneKeywords: string[][]`; language-parameterized TTS instructions
+- `src/app/api/projects/route.ts` — accepts `multipart/form-data` for voiceover uploads (signature+size+ffprobe validated before any DB row is created)
+- `src/app/page.tsx` — Free/Premium toggle (defaults Free), output-language selector, voiceover-mode UI, Auto duration option, `"|"` scene-group hint text
 
 ## Local environment
 
-Installed during development:
+Same as before, plus:
 
-- Node.js 24
-- Python 3.11.9 and `piper-tts` virtual environment
-- FFmpeg 8.1.2
-- yt-dlp 2026.07.04
+- English + Hindi Piper voices in `models/piper/` (gitignored, ~63MB + ~63MB, sourced from `huggingface.co/rhasspy/piper-voices`)
+- VC++ 2015–2022 x64 Redistributable installed via winget
 
-Never commit `.env.local`, `data/`, `media/`, `models/`, `.venv-local-tts/`, `secrets/`, or local binaries.
-
-Relevant safe environment template entries:
+Relevant `.env.local` additions (see `.env.example`):
 
 ```env
-GEMINI_API_KEY=
-PEXELS_API_KEY=
-PIXABAY_API_KEY=
-YOUTUBE_API_KEY=
-DATABASE_PATH=./data/review-studio.sqlite
-MEDIA_ROOT=./media
-FFMPEG_PATH=ffmpeg
-YTDLP_PATH=yt-dlp
-PIPER_EXECUTABLE_PATH=./.venv-local-tts/Scripts/piper.exe
-PIPER_MODEL_PATH=./models/piper/ta_IN-rasa_female-medium.onnx
+FFPROBE_PATH=ffprobe
+PIPER_MODEL_PATH_TA=./models/piper/ta_IN-rasa_female-medium.onnx
+PIPER_MODEL_PATH_EN=./models/piper/en_US-lessac-medium.onnx
+PIPER_MODEL_PATH_HI=./models/piper/hi_IN-rohan-medium.onnx
 ```
 
-## Immediate next step: fix and verify Local TTS
+(`PIPER_MODEL_PATH` without a suffix still works as a fallback for `PIPER_MODEL_PATH_TA`, for backward compatibility.)
 
-Run from normal PowerShell:
+## Validation completed this session
 
-```powershell
-winget install --id Microsoft.VCRedist.2015+.x64 -e
-cd C:\Users\kanna\Documents\Codex\2026-07-12\o\work\video-review-studio
-npm.cmd run test:local-tts
-```
+- `npm.cmd run lint` — 0 errors, same 5 pre-existing `<img>` optimization warnings
+- `npx.cmd tsc --noEmit` — passed after every change
+- `npm.cmd run build` — passed, same harmless Turbopack output-file-tracing warning as before
+- `git diff --check` — passed (only line-ending autocrlf warnings, no real whitespace errors)
+- Extensive real end-to-end tests via curl against the running dev server (not just unit-level): 15s/60s voiceover uploads, invalid-file rejection, Gemini-keyword opt-in vs. off, English/Hindi Local Piper generation, Free vs Premium (including a deliberate tamper test), Auto duration, per-scene keyword matching (verified actual search terms per scene against script content), theme-consistency (shark/puppy scenario), sentence-merge/split behavior
 
-Expected output is `media/piper-test.wav`. Then restart the dev server and generate a fresh 15-second video with **Local Piper — இலவசம்** selected.
+## Recommended regression checks for the next session
 
-## Validation completed before handoff
+1. A YouTube/news/text project on **Free** tier — confirm `tier='free'`, `tts_provider='local'` in the DB, and that the render_jobs payload's `sceneSearchTerms` don't look like polished Gemini output (should be plain local extraction or generic fallback).
+2. A **Premium** project — confirm Gemini genuinely rewrote the script (compare `transcript` vs `review_script` in DB) and that `sceneSearchTerms` are topic-specific per scene.
+3. Voiceover upload with a real WAV/MP3 — confirm signature validation rejects a renamed non-audio file, and that duration comes from real audio, not a preset.
+4. A script with clearly mixed sentence lengths — confirm scene count in `render_jobs.payload.sceneSearchTerms` reflects merge/split behavior, not a flat `ceil(duration/3)`.
+5. English + Hindi Local Piper TTS still both work (`config.piper.models.en` / `.hi` files must exist on disk — they're gitignored, so a fresh clone needs them re-downloaded from `huggingface.co/rhasspy/piper-voices`).
 
-- `git diff --check` — passed
-- `npm.cmd run lint` — 0 errors, 5 existing `<img>` optimization warnings
-- `npx.cmd tsc --noEmit` — passed
-- `npm.cmd run build` — passed
-- One harmless Next/Turbopack output-file-tracing warning remains due to configurable filesystem paths
+## Known follow-up work (in priority order, agreed with the user after reviewing an external "AI video engine" spec)
 
-## Recommended regression checks
-
-1. Local Piper smoke test and 15-second local-TTS video.
-2. Gemini TTS selection still works independently.
-3. A fresh 60-second output lasts at least 60 seconds.
-4. A one-minute output uses at least ten unique six-second assets.
-5. YouTube selection such as 07:00–09:00 uses only that transcript segment.
-6. Clip replacement/rerender, thumbnail, MP4 download, and YouTube upload.
-
-## Known follow-up work
-
-- Resolve/verify the Windows Visual C++ dependency for local `onnxruntime`.
-- Add visible asynchronous processing progress and a projects/history screen.
-- Generate and burn real Tamil subtitles; current preview subtitle is illustrative.
-- Add optional background music with ducking.
-- Chunk long TTS scripts for 5–10 minute outputs.
-- Add audio transcription fallback for YouTube videos without captions.
-- Move bootstrap migrations to numbered SQL migration files as schema grows.
-- Add automated unit and integration tests.
+1. ~~Sentence-level timestamps~~ — **done this session** (reading-pace estimated, not forced-alignment/ASR — still approximate, not frame-accurate).
+2. **Camera motion on real video clips** — currently Ken Burns zoom only applies to static *images* (`ffmpeg.ts`'s `isImage` branch); video clips just get a hard crop/scale with zero movement. Next up.
+3. **Real transitions** — currently pure hard cuts via `-f concat -c copy`. Needs `ffmpeg`'s `xfade` filter chained between scenes; will require re-encoding (can no longer `-c copy` the concat step), so render time will increase.
+4. **Real subtitle burn-in** — current preview subtitle is illustrative only, not generated/synced. Word-level highlighting would need per-word timestamps (harder than the sentence-level estimate already built).
+5. **Clip ranking** — currently first-available match wins; Pexels/Pixabay already return width/height/duration that could be scored (orientation fit, resolution, etc.) without new dependencies.
+6. **Background music with ducking**.
+7. Explicitly **not** pursuing (discussed and deprioritized): additional stock providers beyond Pexels/Pixabay (Mixkit/Videvo/Coverr have no clean public API, scraping is fragile/ToS-risky), true semantic/embedding-based video search (needs new ML infra, evaluate later if keyword matching proves insufficient), and per-sentence NLP entity/emotion extraction (Tamil/Hindi NLP tooling is thin; the existing user-selected "tone" field already serves as the emotion signal).
+8. Older pending items, still open: visible async processing progress + projects/history screen, TTS chunking for 5–10 min outputs, audio-transcription fallback for uncaptioned YouTube videos, numbered SQL migration files, automated tests.
 
 ## Safety and copyright
 
-Outputs use Pexels/Pixabay assets. Source YouTube footage is not inserted into renders. Preserve this default unless the user confirms they own the source footage rights.
+Unchanged: outputs use Pexels/Pixabay assets only; source YouTube footage is never inserted into renders. Preserve this default unless the user confirms they own the source footage rights. The voiceover-upload mode is the one exception where the user supplies their own audio — the *visuals* are still always stock/copyright-safe.
