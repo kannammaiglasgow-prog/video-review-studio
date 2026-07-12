@@ -124,7 +124,7 @@ function parseSceneKeywords(value: unknown, sceneCount: number): string[][] {
 }
 
 const sceneKeywordsInstruction = (sceneCount: number) =>
-  `,"sceneKeywords":[["keyword1","keyword2"]]} — sceneKeywords-ல் script-ஐ காலவரிசைப்படி சரியாக ${sceneCount} பகுதிகளாக பிரித்து, ஒவ்வொரு பகுதியிலும் அப்போது பேசப்படும் விஷயத்துக்கு பொருத்தமான 2-3 English keywords கொடுக்கவும் (searchTerms-ஐ போலவே stock video தேட ஏற்ற English சொற்கள், script மொழியில் அல்ல). சரியாக ${sceneCount} groups இருக்க வேண்டும்`;
+  `,"sceneKeywords":[["keyword1","keyword2"]]} — sceneKeywords-ல் script-ஐ காலவரிசைப்படி சரியாக ${sceneCount} பகுதிகளாக பிரித்து, ஒவ்வொரு பகுதியிலும் அப்போது பேசப்படும் விஷயத்துக்கு பொருத்தமான 2-3 English keywords கொடுக்கவும் (searchTerms-ஐ போலவே stock video தேட ஏற்ற English சொற்கள், script மொழியில் அல்ல). மிக முக்கியம்: ஒவ்வொரு scene-உம் முழு video-வின் பொதுவான தலைப்புடன் பொருந்த வேண்டும் — உதாரணமாக முழு video-வும் கடல் உயிரினங்கள் (underwater/marine life) பற்றி இருந்து, ஒரு பகுதியில் "shark babies" என்று பேசினால், அதற்கான keywords "shark pups underwater" அல்லது "baby shark ocean" போல இருக்க வேண்டும் — "puppy" அல்லது land-animal சம்பந்தமில்லாத keywords கொடுக்கக்கூடாது. ஒவ்வொரு scene-உம் தனித்தனியா யோசிக்காம, முழு video context-ஐ வைத்தே ambiguous வார்த்தைகளை disambiguate செய்யவும். சரியாக ${sceneCount} groups இருக்க வேண்டும்`;
 
 export const geminiReviewProvider: ReviewProvider = {
   async createTamilScript(prompt, sceneCount) {

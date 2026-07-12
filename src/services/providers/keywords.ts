@@ -42,6 +42,19 @@ export function segmentScenes(script: string, sceneCount: number, language: Outp
   return scenes;
 }
 
+// முழு script-லும் அடிக்கடி வரும் content words-ஐ "overall theme"-ஆக எடுத்து, ஒவ்வொரு scene-க்கும் சேர்க்கிறோம் —
+// "shark babies" மாதிரி ambiguous scene-local word, theme "shark/ocean" இல்லாம தனியா தேடினால் "puppy" வரலாம். theme சேர்த்தால் அது தவிர்க்கப்படும்.
+export function extractThemeWords(script: string, language: OutputLanguage, limit = 4) {
+  if (language !== "en") return [] as string[];
+  const stop = stopWords.en;
+  const words = tokenize(script).map((word) => word.toLowerCase()).filter((word) => word.length > 2 && !stop.has(word));
+  const frequency = new Map<string, number>();
+  for (const word of words) frequency.set(word, (frequency.get(word) || 0) + 1);
+  const ranked = [...frequency.entries()].sort((a, b) => b[1] - a[1]);
+  const repeated = ranked.filter(([, count]) => count >= 2).map(([word]) => word);
+  return (repeated.length ? repeated : ranked.map(([word]) => word)).slice(0, limit);
+}
+
 export function localTitleFromText(text: string, maxLength = 60) {
   const trimmed = text.trim();
   const firstSentence = trimmed.match(/^.+?[.!?।॥\n]/)?.[0]?.trim();
@@ -87,8 +100,15 @@ export async function resolveSceneKeywords(options: {
   if (options.geminiSceneKeywords?.length) return { sceneSearchTerms: alignSceneCount(options.geminiSceneKeywords, sceneCount), source: "gemini" };
 
   if (options.language === "en") {
+    const themeWords = extractThemeWords(options.script, "en");
     const localScenes = segmentScenes(options.script, sceneCount, "en");
-    if (localScenes.some((words) => words.length)) return { sceneSearchTerms: localScenes.map((words) => (words.length ? words : genericFallback)), source: "local-english" };
+    if (localScenes.some((words) => words.length) || themeWords.length) {
+      const sceneSearchTerms = localScenes.map((words) => {
+        if (words.length) return [...new Set([...words, ...themeWords])].slice(0, 5);
+        return themeWords.length ? themeWords : genericFallback;
+      });
+      return { sceneSearchTerms, source: "local-english" };
+    }
   }
 
   if (options.allowGemini) {
