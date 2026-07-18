@@ -1,0 +1,13 @@
+export * from "./schemas/transition.schema";
+export * from "./registry/transition-registry";
+export * from "./recommendation/scoring-engine";
+export { recommendTransitions as getRecommendations } from "./recommendation/scoring-engine";
+export { scoreTransition as getScore } from "./recommendation/scoring-engine";
+export { transitionPresets as getPresets } from "./registry/transition-registry";
+export { transitionPresetsMap as getPresetsMap } from "./registry/transition-registry";
+export type { TransitionPreset as Preset } from "./schemas/transition.schema";
+export type { SceneTransitionSelection as Selection } from "./schemas/transition.schema";
+export type { RecommendationResult as Recommendation } from "./schemas/transition.schema";
+export type { SceneMetadata } from "./recommendation/scoring-engine";
+export type { RecommendationOptions } from "./recommendation/scoring-engine";
+export type { TransitionSoundEffect } from "./schemas/transition.schema";

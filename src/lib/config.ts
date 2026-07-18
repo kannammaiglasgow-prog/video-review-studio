@@ -12,6 +12,25 @@ const ffmpegPath = process.env.FFMPEG_PATH || "ffmpeg";
 
 export type OutputLanguage = "ta" | "en" | "hi";
 
+export type VideoStyleConfig = {
+  id: string;
+  name: string;
+  icon: string;
+  description: string;
+  exampleUseCases: string[];
+  estimatedViewerRetention: string;
+  promptConfig: {
+    structure: string;
+    tone: string;
+    visualInstructions: string;
+  };
+  renderConfig: {
+    cameraMotions: string[];
+    transitions: string[];
+    musicEmotion: string;
+  };
+};
+
 export const config = {
   databasePath: path.resolve(root, process.env.DATABASE_PATH || "data/review-studio.sqlite"),
   mediaRoot: path.resolve(root, process.env.MEDIA_ROOT || "media"),
@@ -32,6 +51,7 @@ export const config = {
     pixabay: process.env.PIXABAY_API_KEY,
     youtube: process.env.YOUTUBE_API_KEY,
     googleCloudProject: process.env.GOOGLE_CLOUD_PROJECT_ID,
+    openai: process.env.OPENAI_API_KEY,
   },
   youtubeOAuth: {
     clientId: process.env.YOUTUBE_CLIENT_ID,

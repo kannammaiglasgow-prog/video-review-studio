@@ -19,8 +19,17 @@ export function isYoutubeConfigured() {
   return Boolean(config.youtubeOAuth.clientId && config.youtubeOAuth.clientSecret);
 }
 
-export function isYoutubeConnected() {
-  return fs.existsSync(config.youtubeOAuth.tokenPath);
+export type ChannelType = "news" | "devotional";
+
+function getTokenPath(channelType?: ChannelType) {
+  if (channelType === "devotional") {
+    return path.resolve(process.cwd(), "data/youtube-oauth-devotional.json");
+  }
+  return config.youtubeOAuth.tokenPath;
+}
+
+export function isYoutubeConnected(channelType?: ChannelType) {
+  return fs.existsSync(getTokenPath(channelType));
 }
 
 export function youtubeAuthUrl(redirectUri: string, state: string) {
@@ -36,7 +45,7 @@ export function youtubeAuthUrl(redirectUri: string, state: string) {
   return url.toString();
 }
 
-export async function exchangeYoutubeCode(code: string, redirectUri: string) {
+export async function exchangeYoutubeCode(code: string, redirectUri: string, channelType?: ChannelType) {
   const { clientId, clientSecret } = oauthClient();
   const response = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
@@ -45,15 +54,17 @@ export async function exchangeYoutubeCode(code: string, redirectUri: string) {
   });
   const data = await response.json();
   if (!response.ok || !data.refresh_token) throw new Error(data?.error_description || "Google token exchange தோல்வியடைந்தது");
-  await fsp.mkdir(path.dirname(config.youtubeOAuth.tokenPath), { recursive: true });
+  const tokenPath = getTokenPath(channelType);
+  await fsp.mkdir(path.dirname(tokenPath), { recursive: true });
   const stored: StoredToken = { refreshToken: data.refresh_token, savedAt: new Date().toISOString() };
-  await fsp.writeFile(config.youtubeOAuth.tokenPath, JSON.stringify(stored, null, 2), { encoding: "utf8", mode: 0o600 });
+  await fsp.writeFile(tokenPath, JSON.stringify(stored, null, 2), { encoding: "utf8", mode: 0o600 });
 }
 
-async function accessToken() {
+async function accessToken(channelType?: ChannelType) {
   const { clientId, clientSecret } = oauthClient();
-  if (!isYoutubeConnected()) throw new Error("YouTube இணைக்கப்படவில்லை — முதலில் 'YouTube-உடன் இணை' செய்யவும்");
-  const stored = JSON.parse(await fsp.readFile(config.youtubeOAuth.tokenPath, "utf8")) as StoredToken;
+  const tokenPath = getTokenPath(channelType);
+  if (!fs.existsSync(tokenPath)) throw new Error("YouTube இணைக்கப்படவில்லை — முதலில் 'YouTube-உடன் இணை' செய்யவும்");
+  const stored = JSON.parse(await fsp.readFile(tokenPath, "utf8")) as StoredToken;
   const response = await fetch("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -62,7 +73,7 @@ async function accessToken() {
   const data = await response.json();
   if (!response.ok || !data.access_token) {
     if (data?.error === "invalid_grant") {
-      await fsp.rm(config.youtubeOAuth.tokenPath, { force: true });
+      await fsp.rm(tokenPath, { force: true });
       throw new Error("YouTube அனுமதி காலாவதியாகிவிட்டது — மீண்டும் இணைக்கவும்");
     }
     throw new Error(data?.error_description || "YouTube token refresh தோல்வியடைந்தது");
@@ -70,8 +81,8 @@ async function accessToken() {
   return data.access_token as string;
 }
 
-export async function youtubeChannelInfo(): Promise<ChannelInfo> {
-  const token = await accessToken();
+export async function youtubeChannelInfo(channelType?: ChannelType): Promise<ChannelInfo> {
+  const token = await accessToken(channelType);
   const response = await fetch("https://www.googleapis.com/youtube/v3/channels?part=snippet&mine=true", { headers: { Authorization: `Bearer ${token}` } });
   const data = await response.json();
   if (!response.ok) throw new Error(data?.error?.message || "Channel தகவல் எடுக்க முடியவில்லை");
@@ -80,12 +91,12 @@ export async function youtubeChannelInfo(): Promise<ChannelInfo> {
   return { id: channel.id, title: channel.snippet?.title || "YouTube channel", thumbnail: channel.snippet?.thumbnails?.default?.url, customUrl: channel.snippet?.customUrl };
 }
 
-export async function disconnectYoutube() {
-  await fsp.rm(config.youtubeOAuth.tokenPath, { force: true });
+export async function disconnectYoutube(channelType?: ChannelType) {
+  await fsp.rm(getTokenPath(channelType), { force: true });
 }
 
-export async function setYoutubeThumbnail(videoId: string, filePath: string) {
-  const token = await accessToken();
+export async function setYoutubeThumbnail(videoId: string, filePath: string, channelType?: ChannelType) {
+  const token = await accessToken(channelType);
   const data = await fsp.readFile(filePath);
   if (data.length > 2 * 1024 * 1024) throw new Error("Thumbnail 2MB-க்கு குறைவாக இருக்க வேண்டும்");
   const mime = /\.png$/i.test(filePath) ? "image/png" : "image/jpeg";
@@ -103,8 +114,8 @@ export async function setYoutubeThumbnail(videoId: string, filePath: string) {
 
 export type YoutubeUploadInput = { filePath: string; title: string; description: string; tags?: string[]; privacyStatus: "private" | "unlisted" | "public" };
 
-export async function uploadToYoutube(input: YoutubeUploadInput) {
-  const token = await accessToken();
+export async function uploadToYoutube(input: YoutubeUploadInput, channelType?: ChannelType) {
+  const token = await accessToken(channelType);
   const size = fs.statSync(input.filePath).size;
   const metadata = {
     snippet: { title: input.title.slice(0, 100), description: input.description.slice(0, 4900), tags: (input.tags || []).slice(0, 20), categoryId: "25", defaultLanguage: "ta", defaultAudioLanguage: "ta" },

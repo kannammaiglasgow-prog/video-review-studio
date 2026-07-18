@@ -24,10 +24,18 @@ function insideMediaRoot(filePath: string) {
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;
   const projectId = parseProjectId(id);
-  const project = projectId ? database().prepare("SELECT id FROM projects WHERE id=?").get(projectId) : undefined;
+  const project = projectId ? database().prepare("SELECT id, thumbnail_path FROM projects WHERE id=?").get(projectId) as { id: number; thumbnail_path: string | null } : undefined;
   if (!project) return NextResponse.json({ error: "Project கிடைக்கவில்லை" }, { status: 404 });
-  const filePath = projectId ? thumbnailPath(projectId) : null;
-  if (!filePath) return NextResponse.json({ error: "Thumbnail இல்லை" }, { status: 404 });
+  
+  let filePath = project.thumbnail_path;
+  if (!filePath && projectId) {
+    filePath = thumbnailPath(projectId);
+  }
+  
+  if (!filePath || !fs.existsSync(filePath)) {
+    return NextResponse.json({ error: "Thumbnail இல்லை" }, { status: 404 });
+  }
+  
   const stream = Readable.toWeb(fs.createReadStream(filePath)) as ReadableStream;
   return new NextResponse(stream, { headers: { "Content-Type": /\.png$/i.test(filePath) ? "image/png" : "image/jpeg", "Content-Length": String(fs.statSync(filePath).size), "Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff" } });
 }

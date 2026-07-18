@@ -30,9 +30,21 @@
 npm-debug.log*
 server.out.log
 server.err.log
+.codex-dev.stderr.log
+.codex-dev.stdout.log
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+
+# stray local db files (real db lives at /data/review-studio.sqlite)
+/database.sqlite
+/review-studio.db
+
+# proprietary font, licensing risk in a public repo — keep local-only
+/arial.ttf
+
+# scratch/testing artifacts
+/scratch/
 
 # env files (can opt-in for committing if needed)
 .env*

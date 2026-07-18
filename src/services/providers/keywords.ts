@@ -86,6 +86,7 @@ export async function resolveSceneKeywords(options: {
   customKeywords?: string;
   allowGemini: boolean;
   geminiSceneKeywords?: string[][];
+  projectId?: number;
 }): Promise<{ sceneSearchTerms: string[][]; source: "custom-scenes" | "gemini" | "local-english" | "custom-flat" | "generic" }> {
   const sceneCount = options.scenePlan.length;
 
@@ -94,21 +95,19 @@ export async function resolveSceneKeywords(options: {
 
   if (options.geminiSceneKeywords?.length) return { sceneSearchTerms: alignSceneCount(options.geminiSceneKeywords, sceneCount), source: "gemini" };
 
-  if (options.language === "en") {
-    const themeWords = extractThemeWords(options.script, "en");
-    const localScenes = options.scenePlan.map((scene) => extractSceneWords(scene.text, "en"));
-    if (localScenes.some((words) => words.length) || themeWords.length) {
-      const sceneSearchTerms = localScenes.map((words) => {
-        if (words.length) return [...new Set([...words, ...themeWords])].slice(0, 5);
-        return themeWords.length ? themeWords : genericFallback;
-      });
-      return { sceneSearchTerms, source: "local-english" };
-    }
+  const themeWords = extractThemeWords(options.script, options.language);
+  const localScenes = options.scenePlan.map((scene) => extractSceneWords(scene.text, options.language));
+  if (localScenes.some((words) => words.length) || themeWords.length) {
+    const sceneSearchTerms = localScenes.map((words) => {
+      if (words.length) return [...new Set([...words, ...themeWords])].slice(0, 5);
+      return themeWords.length ? themeWords : genericFallback;
+    });
+    return { sceneSearchTerms, source: "local-english" };
   }
 
   if (options.allowGemini) {
     try {
-      const metadata = await createVideoMetadata(options.script, options.language, sceneCount);
+      const metadata = await createVideoMetadata(options.script, options.language, sceneCount, undefined, options.projectId);
       if (metadata.sceneKeywords?.length) return { sceneSearchTerms: alignSceneCount(metadata.sceneKeywords, sceneCount), source: "gemini" };
       if (metadata.searchTerms?.length) return { sceneSearchTerms: Array.from({ length: sceneCount }, () => metadata.searchTerms), source: "gemini" };
     } catch {
