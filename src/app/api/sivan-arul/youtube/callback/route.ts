@@ -16,11 +16,13 @@ export async function GET(request: Request) {
   const channelType = state.startsWith("sanatana:") ? "sanatana"
     : state.startsWith("story:") ? "story"
     : state.startsWith("english:") ? "english"
+    : state.startsWith("food:") ? "food"
     : state.startsWith("news:") ? "news"
     : "devotional";
   const redirectBase = channelType === "sanatana" ? `${url.origin}/?channel=sanatana`
     : channelType === "story" ? `${url.origin}/?channel=story`
     : channelType === "english" ? `${url.origin}/sivan-arul/story-to-video?channel=english`
+    : channelType === "food" ? `${url.origin}/sivan-arul/story-to-video?channel=food`
     : `${url.origin}/sivan-arul`;
   try {
     await exchangeYoutubeCode(code, `${url.origin}/api/sivan-arul/youtube/callback`, channelType);

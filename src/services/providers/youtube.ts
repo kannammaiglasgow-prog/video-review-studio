@@ -19,7 +19,7 @@ export function isYoutubeConfigured() {
   return Boolean(config.youtubeOAuth.clientId && config.youtubeOAuth.clientSecret);
 }
 
-export type ChannelType = "news" | "devotional" | "sanatana" | "story" | "english";
+export type ChannelType = "news" | "devotional" | "sanatana" | "story" | "english" | "food";
 
 // Expected channel id for the English-stories channel (used to verify the right
 // brand channel was connected during OAuth):
@@ -38,6 +38,9 @@ function getTokenPath(channelType?: ChannelType) {
   }
   if (channelType === "english") {
     return path.resolve(process.cwd(), "data/youtube-oauth-english.json");
+  }
+  if (channelType === "food") {
+    return path.resolve(process.cwd(), "data/youtube-oauth-food.json");
   }
   return config.youtubeOAuth.tokenPath;
 }
@@ -143,6 +146,20 @@ export async function setYoutubeThumbnail(videoId: string, filePath: string, cha
     const error = await response.json().catch(() => ({}));
     if (response.status === 403) throw new Error("Thumbnail அமைக்க channel-ல் phone verification தேவை — youtube.com/verify-ல் verify செய்யவும்");
     throw new Error(error?.error?.message || `Thumbnail அமைக்க முடியவில்லை (${response.status})`);
+  }
+}
+
+/** Change an already-uploaded video's privacy (e.g. to undo an accidental public test upload). */
+export async function updateYoutubeVideoPrivacy(videoId: string, privacyStatus: "private" | "unlisted" | "public", channelType?: ChannelType) {
+  const token = await accessToken(channelType);
+  const response = await fetch("https://www.googleapis.com/youtube/v3/videos?part=status", {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ id: videoId, status: { privacyStatus } }),
+  });
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error?.error?.message || `Privacy மாற்ற முடியவில்லை (${response.status})`);
   }
 }
 

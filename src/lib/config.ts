@@ -58,6 +58,11 @@ export const config = {
     clientSecret: process.env.YOUTUBE_CLIENT_SECRET,
     tokenPath: path.resolve(root, process.env.YOUTUBE_TOKEN_PATH || "data/youtube-oauth.json"),
   },
+  facebookOAuth: {
+    appId: process.env.FACEBOOK_APP_ID,
+    appSecret: process.env.FACEBOOK_APP_SECRET,
+    tokenPath: path.resolve(root, process.env.FACEBOOK_TOKEN_PATH || "data/facebook-oauth.json"),
+  },
 };
 
 export function integrationStatus() {
@@ -68,6 +73,8 @@ export function integrationStatus() {
     youtube: Boolean(config.api.youtube),
     youtubeOAuthConfigured: Boolean(config.youtubeOAuth.clientId && config.youtubeOAuth.clientSecret),
     youtubeOAuthConnected: fs.existsSync(config.youtubeOAuth.tokenPath),
+    facebookOAuthConfigured: Boolean(config.facebookOAuth.appId && config.facebookOAuth.appSecret),
+    facebookOAuthConnected: fs.existsSync(config.facebookOAuth.tokenPath),
     googleTts: Boolean(config.api.googleCloudProject && process.env.GOOGLE_APPLICATION_CREDENTIALS),
     localTts: fs.existsSync(config.piper.executablePath) && fs.existsSync(config.piper.models.ta),
     localTtsLanguages: (Object.keys(config.piper.models) as OutputLanguage[]).filter((language) => fs.existsSync(config.piper.models[language])),

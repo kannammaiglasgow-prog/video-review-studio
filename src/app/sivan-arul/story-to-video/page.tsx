@@ -22,6 +22,9 @@ type ProjectStatus = {
   youtubeChannel: string | null;
   youtubeVideoId: string | null;
   youtubeUrl: string | null;
+  facebookPageId: string | null;
+  facebookVideoId: string | null;
+  facebookUrl: string | null;
   errorMessage: string | null;
   aspectRatio: string;
   bgmEnabled: boolean;
@@ -48,6 +51,7 @@ const voiceOptions = [
 const channelOptions = [
   { value: "story", label: "Tamil Story (@biggbosstamil247)" },
   { value: "english", label: "English Stories" },
+  { value: "food", label: "Food Business" },
   { value: "devotional", label: "Sivan Arul (Devotional)" },
   { value: "sanatana", label: "Sanatana Spirit (English)" },
   { value: "news", label: "Tamil Politics Star (News)" },
@@ -81,9 +85,11 @@ export default function StoryToVideoPage() {
   const [language, setLanguage] = useState<"ta" | "en">("ta");
   const [ttsMode, setTtsMode] = useState<"free" | "paid">("free");
   const [localize, setLocalize] = useState(false);
+  const [autoUpload, setAutoUpload] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
   const [projectId, setProjectId] = useState<number | null>(null);
+  const [recentProjects, setRecentProjects] = useState<{ id: number; status: string; storyPreview: string; language: string; createdAt: string; hasVideo: boolean }[]>([]);
   const [project, setProject] = useState<ProjectStatus | null>(null);
   const [rendering, setRendering] = useState(false);
   const [seoBusy, setSeoBusy] = useState(false);
@@ -97,6 +103,11 @@ export default function StoryToVideoPage() {
   const [uploading, setUploading] = useState(false);
   const [channelStatus, setChannelStatus] = useState<{ connected: boolean; channel?: { id: string; title: string }; matchesExpected?: boolean } | null>(null);
   const [channelBusy, setChannelBusy] = useState(false);
+  const [fbPages, setFbPages] = useState<{ id: string; name: string }[]>([]);
+  const [fbPageId, setFbPageId] = useState("");
+  const [fbConnected, setFbConnected] = useState(false);
+  const [fbBusy, setFbBusy] = useState(false);
+  const [fbUploading, setFbUploading] = useState(false);
   const [imageAnalyzing, setImageAnalyzing] = useState(false);
   const [pastedImagePreview, setPastedImagePreview] = useState<string | null>(null);
   const fileInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
@@ -140,6 +151,27 @@ export default function StoryToVideoPage() {
     }
   };
 
+  // Reset everything to start a fresh story — also strips ?project= from the
+  // URL so the "load from URL" effect below doesn't immediately re-hydrate it.
+  const createNewVideo = () => {
+    const params = new URLSearchParams(window.location.search);
+    params.delete("project");
+    const qs = params.toString();
+    window.history.replaceState({}, "", qs ? `${window.location.pathname}?${qs}` : window.location.pathname);
+
+    setProjectId(null);
+    setProject(null);
+    setStory("");
+    setTitle("");
+    setDescription("");
+    setTags("");
+    setThumbPrompt("");
+    setPastedImagePreview(null);
+    setImageAnalyzing(false);
+    setMessage("");
+    setChannelStatus(null);
+  };
+
   const fetchProject = useCallback(async (id: number) => {
     try {
       const res = await fetch(`/api/sivan-arul/story-to-video/${id}?t=${Date.now()}`, { cache: "no-store" });
@@ -169,6 +201,25 @@ export default function StoryToVideoPage() {
     const interval = setInterval(() => fetchProject(projectId), 3000);
     return () => clearInterval(interval);
   }, [projectId, fetchProject]);
+
+  // "Recent Projects" list — lets the user jump back into any in-flight or
+  // finished project (e.g. one still generating in the background after they
+  // started a second one) without needing to remember its id. Only relevant on
+  // the fresh create-form view; polls lightly so statuses stay live there too.
+  const fetchRecentProjects = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/sivan-arul/story-to-video/list?t=${Date.now()}`, { cache: "no-store" });
+      const data = await res.json();
+      setRecentProjects(data.projects || []);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => {
+    if (projectId) return;
+    fetchRecentProjects();
+    const interval = setInterval(fetchRecentProjects, 5000);
+    return () => clearInterval(interval);
+  }, [projectId, fetchRecentProjects]);
 
   // Default the upload channel to the English-stories channel for English projects.
   useEffect(() => {
@@ -299,7 +350,66 @@ export default function StoryToVideoPage() {
     }
   };
 
-  const uploadToYoutube = async () => {
+  const refreshFacebookStatus = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/sivan-arul/facebook/manage?t=${Date.now()}`, { cache: "no-store" });
+      const data = await res.json();
+      setFbConnected(Boolean(data.connected));
+      setFbPages(data.pages || []);
+      setFbPageId((prev) => prev || (data.pages?.[0]?.id ?? ""));
+    } catch {
+      setFbConnected(false);
+      setFbPages([]);
+    }
+  }, []);
+
+  useEffect(() => { refreshFacebookStatus(); }, [refreshFacebookStatus]);
+
+  const connectFacebook = () => {
+    window.open("/api/sivan-arul/facebook/auth", "_blank", "width=560,height=720");
+    setMessage("🔗 Facebook OAuth window திறந்தது — login → Page-ஐத் தேர்ந்தெடுத்து Allow செய்யவும். முடிந்ததும் status தானாக update ஆகும்.");
+    let n = 0;
+    const iv = setInterval(() => { n += 1; refreshFacebookStatus(); if (n > 20) clearInterval(iv); }, 3000);
+  };
+
+  const disconnectFacebookAccount = async () => {
+    setFbBusy(true);
+    try {
+      await fetch("/api/sivan-arul/facebook/manage", { method: "DELETE" });
+      await refreshFacebookStatus();
+      setMessage("🔌 Facebook disconnect ஆயிற்று.");
+    } finally {
+      setFbBusy(false);
+    }
+  };
+
+  const uploadToFacebookVideo = async () => {
+    if (!projectId || !fbPageId) return;
+    setFbUploading(true);
+    setMessage("");
+    try {
+      const res = await fetch(`/api/sivan-arul/story-to-video/${projectId}/upload-facebook`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pageId: fbPageId, title, description }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setMessage(`✅ Facebook Upload வெற்றி! ${data.url}`);
+        fetchProject(projectId);
+      } else {
+        setMessage(`❌ ${data.error}`);
+      }
+    } catch {
+      setMessage("❌ Facebook Upload தோல்வி");
+    } finally {
+      setFbUploading(false);
+    }
+  };
+
+  // overrides lets the auto-upload flow pass freshly-generated SEO text directly
+  // instead of reading React state (which wouldn't be updated yet in the same tick).
+  const uploadToYoutube = async (overrides?: { title?: string; description?: string; tags?: string }) => {
     if (!projectId) return;
     setUploading(true);
     setMessage("");
@@ -308,8 +418,10 @@ export default function StoryToVideoPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          channel, title, description,
-          tags: tags.split(",").map((t) => t.trim()).filter(Boolean),
+          channel,
+          title: overrides?.title ?? title,
+          description: overrides?.description ?? description,
+          tags: (overrides?.tags ?? tags).split(",").map((t) => t.trim()).filter(Boolean),
           privacyStatus: privacy,
         }),
       });
@@ -330,6 +442,71 @@ export default function StoryToVideoPage() {
   const allImagesUploaded = project?.uploadedImages?.length ? project.uploadedImages.every(Boolean) : false;
   const scriptReady = project && ["script_ready", "generating_images", "rendering", "rendered", "uploaded"].includes(project.status);
   const videoReady = project && ["rendered", "uploaded"].includes(project.status);
+
+  // Auto-render: no button click needed — the instant every scene has its media
+  // (stock-fetched or manually topped-up), render starts by itself. The ref guard
+  // stops it firing again on every 3s poll while status is still "script_ready".
+  const autoRenderFiredRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!project || !allImagesUploaded) return;
+    if (project.status !== "script_ready") return;
+    if (autoRenderFiredRef.current === project.id) return;
+    autoRenderFiredRef.current = project.id;
+    renderVideoNow();
+  }, [project, allImagesUploaded]);
+
+  // Auto-upload: only when the "Auto Upload" checkbox was on when the story was
+  // submitted. Once rendering finishes, generate SEO (if not already done) and
+  // upload straight away — no confirmation clicks.
+  const autoUploadFiredRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!project || !autoUpload) return;
+    if (project.status !== "rendered" || project.youtubeUrl) return;
+    if (autoUploadFiredRef.current === project.id) return;
+    autoUploadFiredRef.current = project.id;
+    (async () => {
+      let seoTitle = title, seoDescription = description, seoTagsStr = tags;
+      if (!seoTitle.trim()) {
+        try {
+          const res = await fetch(`/api/sivan-arul/story-to-video/${project.id}/seo`, { method: "POST" });
+          const data = await res.json();
+          if (data.success) {
+            seoTitle = data.title; seoDescription = data.description; seoTagsStr = data.tags.join(", ");
+            setTitle(seoTitle); setDescription(seoDescription); setTags(seoTagsStr);
+          }
+        } catch { /* upload still proceeds; backend falls back to a generic title */ }
+      }
+      await uploadToYoutube({ title: seoTitle, description: seoDescription, tags: seoTagsStr });
+    })();
+  }, [project, autoUpload]);
+
+  // Shown both on the input form (so the channel is visible/changeable before
+  // generating — important now that Auto Upload can fire without any clicks)
+  // and again in the final upload section. Same state/handlers, one source of truth.
+  const channelPickerBlock = (
+    <div style={{ flex: "1 1 200px" }}>
+      <label style={label}>YouTube Channel</label>
+      <select value={channel} onChange={(e) => setChannel(e.target.value)} style={input}>
+        {channelOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+      </select>
+      <div style={{ marginTop: 8, fontSize: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        {channelStatus?.connected ? (
+          <span style={{ color: channelStatus.matchesExpected === false ? "#ffb060" : "#8bff8b" }}>
+            {channelStatus.matchesExpected === false ? "⚠️" : "✅"} {channelStatus.channel?.title}
+            {channelStatus.matchesExpected === false ? " — wrong channel!" : ""}
+          </span>
+        ) : (
+          <span style={{ color: "#ff9090" }}>⬜ Not connected</span>
+        )}
+        <button onClick={connectChannel} style={{ ...btn, padding: "5px 12px", fontSize: 12 }}>🔗 Connect</button>
+        {channelStatus?.connected && (
+          <button onClick={disconnectChannel} disabled={channelBusy} style={{ ...(channelBusy ? btnDisabled : btn), background: "#5a2a2a", padding: "5px 12px", fontSize: 12 }}>
+            {channelBusy ? "..." : "🔌 Disconnect"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
 
   return (
     <div style={{ minHeight: "100vh", background: "#0a0a14", color: "#e0e0f0", fontFamily: "system-ui, sans-serif", padding: "24px 16px" }}>
@@ -371,6 +548,21 @@ export default function StoryToVideoPage() {
                 </span>
               </div>
             )}
+            <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", marginBottom: 12, fontSize: 13, color: "#c0c0d8" }}>
+              <input type="checkbox" checked={autoUpload} onChange={(e) => setAutoUpload(e.target.checked)} style={{ marginTop: 3 }} />
+              <span>🚀 <b>Auto Upload</b> — media தயாரானதும் தானாகவே render ஆகும் (எப்போதும்); இது tick செய்திருந்தால், render முடிந்ததும் SEO தானாக generate ஆகி நேரடியாக YouTube-க்கு (தேர்ந்த channel/privacy-உடன்) upload ஆகிவிடும் — எந்த button-ஐயும் அழுத்த வேண்டாம்.</span>
+            </label>
+            <div style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap" }}>
+              {channelPickerBlock}
+              <div style={{ flex: "1 1 200px" }}>
+                <label style={label}>Privacy (upload செய்யும்போது)</label>
+                <select value={privacy} onChange={(e) => setPrivacy(e.target.value as typeof privacy)} style={input}>
+                  <option value="private">Private</option>
+                  <option value="unlisted">Unlisted</option>
+                  <option value="public">Public</option>
+                </select>
+              </div>
+            </div>
             <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", marginBottom: 16, fontSize: 13, color: "#c0c0d8" }}>
               <input type="checkbox" checked={localize} onChange={(e) => setLocalize(e.target.checked)} style={{ marginTop: 3 }} />
               <span>🌏 <b>Localize to the selected language&apos;s culture</b> — names &amp; places adapt to the language (e.g. English story + Tamil → Tamil names, Tamil places, native Tamil story). Off = no changes at all — same-language story is used exactly as typed, a different-language story gets a literal translation only (no rewriting).</span>
@@ -421,6 +613,27 @@ export default function StoryToVideoPage() {
             <button onClick={submitStory} disabled={submitting} style={submitting ? btnDisabled : btn}>
               {submitting ? "தொடங்குகிறது..." : "🚀 Generate Script + Audio + Prompts"}
             </button>
+          </div>
+        )}
+
+        {!projectId && recentProjects.length > 0 && (
+          <div style={box}>
+            <label style={label}>📋 Recent Projects — ஒரு project-ஐ (இன்னும் process ஆகிக்கொண்டிருந்தாலும்) மீண்டும் திறக்க கீழே click செய்யவும்</label>
+            <div style={{ maxHeight: 340, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8 }}>
+              {recentProjects.map((p) => (
+                <div
+                  key={p.id}
+                  onClick={() => setProjectId(p.id)}
+                  style={{ cursor: "pointer", background: "#0f0f1e", border: "1px solid #3a3a5a", borderRadius: 8, padding: 10 }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#a0a0c0", marginBottom: 4 }}>
+                    <span>#{p.id} · {p.createdAt} · {p.language === "en" ? "English" : "தமிழ்"}</span>
+                    <span>{statusLabels[p.status] || p.status}</span>
+                  </div>
+                  <div style={{ fontSize: 13, color: "#d0d0e0" }}>{p.storyPreview}{p.storyPreview.length >= 90 ? "…" : ""}</div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -550,28 +763,7 @@ export default function StoryToVideoPage() {
                   style={{ ...input, resize: "vertical", marginBottom: 16 }}
                 />
                 <div style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap" }}>
-                  <div style={{ flex: "1 1 200px" }}>
-                    <label style={label}>Channel</label>
-                    <select value={channel} onChange={(e) => setChannel(e.target.value)} style={input}>
-                      {channelOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                    </select>
-                    <div style={{ marginTop: 8, fontSize: 12, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                      {channelStatus?.connected ? (
-                        <span style={{ color: channelStatus.matchesExpected === false ? "#ffb060" : "#8bff8b" }}>
-                          {channelStatus.matchesExpected === false ? "⚠️" : "✅"} {channelStatus.channel?.title}
-                          {channelStatus.matchesExpected === false ? " — wrong channel!" : ""}
-                        </span>
-                      ) : (
-                        <span style={{ color: "#ff9090" }}>⬜ Not connected</span>
-                      )}
-                      <button onClick={connectChannel} style={{ ...btn, padding: "5px 12px", fontSize: 12 }}>🔗 Connect</button>
-                      {channelStatus?.connected && (
-                        <button onClick={disconnectChannel} disabled={channelBusy} style={{ ...(channelBusy ? btnDisabled : btn), background: "#5a2a2a", padding: "5px 12px", fontSize: 12 }}>
-                          {channelBusy ? "..." : "🔌 Disconnect"}
-                        </button>
-                      )}
-                    </div>
-                  </div>
+                  {channelPickerBlock}
                   <div style={{ flex: "1 1 200px" }}>
                     <label style={label}>Privacy</label>
                     <select value={privacy} onChange={(e) => setPrivacy(e.target.value as typeof privacy)} style={input}>
@@ -584,12 +776,48 @@ export default function StoryToVideoPage() {
                 {project.youtubeUrl ? (
                   <div style={{ color: "#8bff8b" }}>✅ Uploaded: <a href={project.youtubeUrl} target="_blank" style={{ color: "#a78bfa" }}>{project.youtubeUrl}</a></div>
                 ) : (
-                  <button onClick={uploadToYoutube} disabled={uploading} style={uploading ? btnDisabled : btn}>
+                  <button onClick={() => uploadToYoutube()} disabled={uploading} style={uploading ? btnDisabled : btn}>
                     {uploading ? "Uploading..." : "🚀 Upload to YouTube"}
                   </button>
                 )}
               </div>
             )}
+
+            {videoReady && (
+              <div style={box}>
+                <label style={label}>📘 Facebook Page-க்கும் upload செய்யலாம் (அதே video)</label>
+                <select value={fbPageId} onChange={(e) => setFbPageId(e.target.value)} style={{ ...input, marginBottom: 8 }}>
+                  {fbPages.length === 0 && <option value="">— Page இல்லை, முதலில் Connect செய்யவும் —</option>}
+                  {fbPages.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 12, fontSize: 12 }}>
+                  {fbConnected ? (
+                    <span style={{ color: "#8bff8b" }}>✅ Facebook connected ({fbPages.length} page{fbPages.length === 1 ? "" : "s"})</span>
+                  ) : (
+                    <span style={{ color: "#ff9090" }}>⬜ Facebook Not connected</span>
+                  )}
+                  <button onClick={connectFacebook} style={{ ...btn, padding: "5px 12px", fontSize: 12 }}>🔗 Connect</button>
+                  {fbConnected && (
+                    <button onClick={disconnectFacebookAccount} disabled={fbBusy} style={{ ...(fbBusy ? btnDisabled : btn), background: "#5a2a2a", padding: "5px 12px", fontSize: 12 }}>
+                      {fbBusy ? "..." : "🔌 Disconnect"}
+                    </button>
+                  )}
+                </div>
+                {project.facebookUrl ? (
+                  <div style={{ color: "#8bff8b" }}>✅ Uploaded: <a href={project.facebookUrl} target="_blank" style={{ color: "#a78bfa" }}>{project.facebookUrl}</a></div>
+                ) : (
+                  <button onClick={uploadToFacebookVideo} disabled={fbUploading || !fbPageId} style={(fbUploading || !fbPageId) ? btnDisabled : btn}>
+                    {fbUploading ? "Uploading..." : "📘 Upload to Facebook"}
+                  </button>
+                )}
+              </div>
+            )}
+
+            <div style={box}>
+              <button onClick={createNewVideo} style={{ ...btn, background: "linear-gradient(135deg,#2d5a3a,#1a3a2a)", width: "100%" }}>
+                ➕ Create New Video
+              </button>
+            </div>
           </>
         )}
       </div>

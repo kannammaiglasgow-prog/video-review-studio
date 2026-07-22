@@ -6,7 +6,7 @@ import { uploadToYoutube, youtubeChannelInfo, ENGLISH_CHANNEL_ID, type ChannelTy
 export const runtime = "nodejs";
 export const maxDuration = 600;
 
-const validChannels: ChannelType[] = ["news", "devotional", "sanatana", "story", "english"];
+const validChannels: ChannelType[] = ["news", "devotional", "sanatana", "story", "english", "food"];
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   const { id } = await context.params;

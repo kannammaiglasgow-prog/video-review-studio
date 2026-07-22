@@ -277,6 +277,17 @@ function migrate(db: DatabaseSync) {
     db.exec("ALTER TABLE story_projects ADD COLUMN localize INTEGER NOT NULL DEFAULT 0");
   }
   db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (21, 'story_localize')");
+
+  if (!hasCol("story_projects", "facebook_page_id")) {
+    db.exec("ALTER TABLE story_projects ADD COLUMN facebook_page_id TEXT");
+  }
+  if (!hasCol("story_projects", "facebook_video_id")) {
+    db.exec("ALTER TABLE story_projects ADD COLUMN facebook_video_id TEXT");
+  }
+  if (!hasCol("story_projects", "facebook_url")) {
+    db.exec("ALTER TABLE story_projects ADD COLUMN facebook_url TEXT");
+  }
+  db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (22, 'story_facebook')");
 }
 
 export function database() {
@@ -324,6 +335,9 @@ export type StoryProjectRow = {
   youtube_channel: string | null;
   youtube_video_id: string | null;
   youtube_url: string | null;
+  facebook_page_id: string | null;
+  facebook_video_id: string | null;
+  facebook_url: string | null;
   error_message: string | null;
   aspect_ratio: string;
   bgm_enabled: number;
@@ -379,6 +393,24 @@ function safeParse(text: string): Record<string, number> {
 export function getStoryProject(id: number): StoryProjectRow | undefined {
   const db = database();
   return db.prepare("SELECT * FROM story_projects WHERE id = ?").get(id) as StoryProjectRow | undefined;
+}
+
+export type StoryProjectSummary = {
+  id: number;
+  status: string;
+  story_input: string;
+  language: string;
+  created_at: string;
+  has_video: number;
+};
+
+/** Newest-first summary list, for a "Recent Projects" picker — lets the user jump
+ * back into any in-flight or finished project without needing to know its id. */
+export function listStoryProjects(limit = 20): StoryProjectSummary[] {
+  const db = database();
+  return db.prepare(
+    "SELECT id, status, story_input, language, created_at, (output_path IS NOT NULL) AS has_video FROM story_projects ORDER BY id DESC LIMIT ?"
+  ).all(limit) as StoryProjectSummary[];
 }
 
 export function updateStoryProject(id: number, fields: Partial<Omit<StoryProjectRow, "id" | "created_at" | "updated_at">>) {
