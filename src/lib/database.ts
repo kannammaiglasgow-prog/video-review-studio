@@ -209,6 +209,74 @@ function migrate(db: DatabaseSync) {
     );
   `);
   db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (11, 'intelligent_media_library')");
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS story_projects (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      story_input TEXT NOT NULL,
+      script TEXT,
+      duration_target INTEGER NOT NULL,
+      voice TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'generating',
+      scenes_json TEXT,
+      audio_path TEXT,
+      audio_duration REAL,
+      output_path TEXT,
+      seo_title TEXT,
+      seo_description TEXT,
+      seo_tags TEXT,
+      youtube_channel TEXT,
+      youtube_video_id TEXT,
+      youtube_url TEXT,
+      error_message TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (15, 'add_story_projects')");
+
+  // Story options + API cost tracking
+  if (!hasCol("story_projects", "aspect_ratio")) {
+    db.exec("ALTER TABLE story_projects ADD COLUMN aspect_ratio TEXT NOT NULL DEFAULT '16:9'");
+  }
+  if (!hasCol("story_projects", "bgm_enabled")) {
+    db.exec("ALTER TABLE story_projects ADD COLUMN bgm_enabled INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!hasCol("story_projects", "animate_enabled")) {
+    db.exec("ALTER TABLE story_projects ADD COLUMN animate_enabled INTEGER NOT NULL DEFAULT 1");
+  }
+  if (!hasCol("story_projects", "api_cost")) {
+    db.exec("ALTER TABLE story_projects ADD COLUMN api_cost REAL NOT NULL DEFAULT 0");
+  }
+  if (!hasCol("story_projects", "cost_breakdown")) {
+    db.exec("ALTER TABLE story_projects ADD COLUMN cost_breakdown TEXT");
+  }
+  db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (16, 'story_options_and_cost')");
+
+  if (!hasCol("story_projects", "language")) {
+    db.exec("ALTER TABLE story_projects ADD COLUMN language TEXT NOT NULL DEFAULT 'ta'");
+  }
+  db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (17, 'story_language')");
+
+  if (!hasCol("story_projects", "media_source")) {
+    db.exec("ALTER TABLE story_projects ADD COLUMN media_source TEXT NOT NULL DEFAULT 'flow'");
+  }
+  db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (18, 'story_media_source')");
+
+  if (!hasCol("story_projects", "thumbnail_prompt")) {
+    db.exec("ALTER TABLE story_projects ADD COLUMN thumbnail_prompt TEXT");
+  }
+  db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (19, 'story_thumbnail_prompt')");
+
+  if (!hasCol("story_projects", "tts_mode")) {
+    db.exec("ALTER TABLE story_projects ADD COLUMN tts_mode TEXT NOT NULL DEFAULT 'paid'");
+  }
+  db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (20, 'story_tts_mode')");
+
+  if (!hasCol("story_projects", "localize")) {
+    db.exec("ALTER TABLE story_projects ADD COLUMN localize INTEGER NOT NULL DEFAULT 0");
+  }
+  db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (21, 'story_localize')");
 }
 
 export function database() {
@@ -235,4 +303,89 @@ export function addProjectActualCost(projectId: number, stepName: string, amount
   breakdown[stepName] = (breakdown[stepName] || 0) + amount;
 
   db.prepare("UPDATE projects SET actual_cost = ?, cost_breakdown = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(newCost, JSON.stringify(breakdown), projectId);
+}
+
+export type StoryScene = { prompt: string; seconds: number; imagePath?: string };
+
+export type StoryProjectRow = {
+  id: number;
+  story_input: string;
+  script: string | null;
+  duration_target: number;
+  voice: string;
+  status: string;
+  scenes_json: string | null;
+  audio_path: string | null;
+  audio_duration: number | null;
+  output_path: string | null;
+  seo_title: string | null;
+  seo_description: string | null;
+  seo_tags: string | null;
+  youtube_channel: string | null;
+  youtube_video_id: string | null;
+  youtube_url: string | null;
+  error_message: string | null;
+  aspect_ratio: string;
+  bgm_enabled: number;
+  animate_enabled: number;
+  api_cost: number;
+  cost_breakdown: string | null;
+  language: string;
+  media_source: string;
+  thumbnail_prompt: string | null;
+  tts_mode: string;
+  localize: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type StoryOptions = { aspectRatio?: "16:9" | "9:16"; bgm?: boolean; animate?: boolean; language?: "ta" | "en"; mediaSource?: "flow" | "stock"; ttsMode?: "free" | "paid"; localize?: boolean };
+
+export function createStoryProject(storyInput: string, durationTarget: number, voice: string, options: StoryOptions = {}): number {
+  const db = database();
+  const result = db.prepare(
+    "INSERT INTO story_projects (story_input, duration_target, voice, status, aspect_ratio, bgm_enabled, animate_enabled, language, media_source, tts_mode, localize) VALUES (?, ?, ?, 'generating', ?, ?, ?, ?, ?, ?, ?)"
+  ).run(
+    storyInput,
+    durationTarget,
+    voice,
+    options.aspectRatio === "9:16" ? "9:16" : "16:9",
+    options.bgm ? 1 : 0,
+    options.animate === false ? 0 : 1,
+    options.language === "en" ? "en" : "ta",
+    options.mediaSource === "stock" ? "stock" : "flow",
+    options.ttsMode === "free" ? "free" : "paid",
+    options.localize ? 1 : 0,
+  );
+  return Number(result.lastInsertRowid);
+}
+
+/** Accumulate an API cost (USD) against a story project, with a per-step breakdown. */
+export function addStoryCost(storyId: number, step: string, amount: number) {
+  if (!storyId || !amount) return;
+  const db = database();
+  const row = db.prepare("SELECT api_cost, cost_breakdown FROM story_projects WHERE id = ?").get(storyId) as { api_cost: number; cost_breakdown: string | null } | undefined;
+  if (!row) return;
+  const breakdown: Record<string, number> = row.cost_breakdown ? safeParse(row.cost_breakdown) : {};
+  breakdown[step] = (breakdown[step] || 0) + amount;
+  db.prepare("UPDATE story_projects SET api_cost = ?, cost_breakdown = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?")
+    .run((row.api_cost || 0) + amount, JSON.stringify(breakdown), storyId);
+}
+
+function safeParse(text: string): Record<string, number> {
+  try { return JSON.parse(text); } catch { return {}; }
+}
+
+export function getStoryProject(id: number): StoryProjectRow | undefined {
+  const db = database();
+  return db.prepare("SELECT * FROM story_projects WHERE id = ?").get(id) as StoryProjectRow | undefined;
+}
+
+export function updateStoryProject(id: number, fields: Partial<Omit<StoryProjectRow, "id" | "created_at" | "updated_at">>) {
+  const db = database();
+  const keys = Object.keys(fields);
+  if (keys.length === 0) return;
+  const setClause = keys.map((key) => `${key} = ?`).join(", ");
+  const values = keys.map((key) => (fields as Record<string, unknown>)[key]) as (string | number | null)[];
+  db.prepare(`UPDATE story_projects SET ${setClause}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(...values, id);
 }

@@ -404,10 +404,13 @@ def generate_tts_endpoint():
     try:
         body = request.json or {}
         text = body.get("text", "").strip()
-        
+        language = body.get("language", "ta")
+
         # Normalize digits to Tamil words to ensure clear pronunciation by Parler-TTS
-        text = replace_numbers_with_tamil_words(text)
-        
+        # (only for Tamil output -- English/other languages keep numerals as-is)
+        if language == "ta":
+            text = replace_numbers_with_tamil_words(text)
+
         output_path = body.get("outputPath")
         voice_desc = body.get("voiceDescription", "")
         
@@ -471,18 +474,18 @@ def generate_tts_endpoint():
         write_db_log("tts", f"🎤 Parler-TTS: {len(sentences)} வாக்கியங்கள் பிரிக்கப்பட்டன...")
         
         description_inputs = d_tok(voice_desc, return_tensors="pt").to(device)
-        
+
         # 0.25 seconds silence padding between clauses for natural breathing flow
         silence_samples = int(0.25 * model.config.sampling_rate)
         silence_padding = np.zeros(silence_samples, dtype=np.float32)
-        
+
         combined_audio = []
-        
+
         for idx, sentence in enumerate(sentences):
             logger.info(f"Processing sentence {idx + 1}/{len(sentences)}: {sentence}")
             write_db_log("tts", f"🎤 Parler-TTS — வாக்கியம் {idx + 1}/{len(sentences)} பேசுகிறது...")
             prompt_inputs = p_tok(sentence, return_tensors="pt").to(device)
-            
+
             with torch.inference_mode():
                 generation = model.generate(
                     input_ids=description_inputs.input_ids,
@@ -490,10 +493,10 @@ def generate_tts_endpoint():
                     prompt_input_ids=prompt_inputs.input_ids,
                     prompt_attention_mask=prompt_inputs.attention_mask,
                 )
-                
+
             audio_segment = generation.cpu().numpy().squeeze()
             combined_audio.append(audio_segment)
-            
+
             # Add silence between sentences (but not after the last one)
             if idx < len(sentences) - 1:
                 combined_audio.append(silence_padding)

@@ -18,7 +18,7 @@ export function requestLocalHost(method: "GET" | "POST", pathName: string, paylo
         "Content-Type": "application/json",
         "Content-Length": Buffer.byteLength(postData),
       },
-      timeout: 300_000,
+      timeout: 900_000,
     };
 
     const req = http.request(options, (res) => {

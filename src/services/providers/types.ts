@@ -12,7 +12,7 @@ export interface ReviewProvider {
 }
 
 export interface SpeechProvider {
-  synthesize(text: string, outputPath: string, voice: string, language?: OutputLanguage, projectId?: number): Promise<void>;
+  synthesize(text: string, outputPath: string, voice: string, language?: OutputLanguage, projectId?: number, storyId?: number): Promise<void>;
 }
 
 export interface StockMediaProvider {

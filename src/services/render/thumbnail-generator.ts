@@ -207,7 +207,8 @@ export async function generateAutoThumbnail(options: ThumbnailOptions): Promise<
 
   // 4. Invoke Headless Chrome to capture screenshot
   const chromePath = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
-  const cmd = `"${chromePath}" --headless --disable-gpu --virtual-time-budget=2000 --screenshot="${outputPath}" --window-size=${canvasWidth},${canvasHeight} "file:///${htmlPath}"`;
+  const chromeProfileDir = path.join(config.mediaRoot, ".thumbnail-chrome-profile").replaceAll("\\", "/");
+  const cmd = `"${chromePath}" --headless --disable-gpu --user-data-dir="${chromeProfileDir}" --no-first-run --virtual-time-budget=8000 --screenshot="${outputPath}" --window-size=${canvasWidth},${canvasHeight} "file:///${htmlPath}"`;
 
   await new Promise<void>((resolve, reject) => {
     exec(cmd, (err) => {

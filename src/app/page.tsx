@@ -43,6 +43,12 @@ export default function StyleSelection() {
               🕉️ சிவன் அருள் (Sivan Arul)
             </button>
             <button
+              onClick={() => router.push("/sivan-arul/story-to-video")}
+              className="px-3.5 py-2 text-xs font-semibold rounded-lg bg-gradient-to-r from-violet-600 to-pink-500 hover:from-violet-500 hover:to-pink-400 border border-violet-500/20 text-white transition flex items-center gap-1.5"
+            >
+              📖 Story to Video
+            </button>
+            <button
               onClick={() => router.push("/auto-news")}
               className="px-3.5 py-2 text-xs font-semibold rounded-lg bg-white/5 border border-white/10 hover:bg-white/10 text-slate-300 transition flex items-center gap-1.5"
             >

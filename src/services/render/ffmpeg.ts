@@ -30,6 +30,7 @@ export type RenderSpec = {
   ctaPosition?: string;
   splitShortsEnabled?: boolean;
   bgmEnabled?: boolean;
+  animate?: boolean; // Ken Burns camera motion on stills (default true)
 };
 
 // sentence-timing இல்லாத இடங்களில் (Gemini prompt-க்கு upfront estimate) இன்னும் பயன்படும் "ideal" scene length
@@ -378,7 +379,9 @@ export async function renderVideo(spec: RenderSpec) {
   const scale = duration / rawTotal;
   const normalized: string[] = [];
 
-  const allowedMotions = spec.styleConfig?.renderConfig?.cameraMotions || ["Zoom In", "Zoom Out", "Pan Left", "Pan Right", "Static"];
+  const allowedMotions = spec.animate === false
+    ? ["Static"]
+    : (spec.styleConfig?.renderConfig?.cameraMotions || ["Zoom In", "Zoom Out", "Pan Left", "Pan Right"]);
 
   // 1. Compile each scene video clip
   for (let index = 0; index < spec.scenes.length; index += 1) {

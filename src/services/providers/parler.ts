@@ -12,7 +12,16 @@ export const voicePromptDescriptions: Record<string, string> = {
   "parler-sundar": "Sundar speaks in Tamil in a clear and professional male news-reading voice. He speaks at a moderate speed with a natural and expressive tone. The recording is very clear and has no background noise.",
   "parler-karthik": "Karthik speaks in Tamil in a natural and friendly male voice. He speaks with moderate speed and standard expression. The recording is clean.",
   "parler-vasanth": "Vasanth speaks in Tamil in a deep, calm male voice. He speaks slowly and clearly with a warm, professional tone. The recording is clear.",
-  "parler-arvind": "Arvind speaks in Tamil in a fast-paced, energetic male voice. He speaks with an expressive and active tone. The recording is clear."
+  "parler-arvind": "Arvind speaks in Tamil in a fast-paced, energetic male voice. He speaks with an expressive and active tone. The recording is clear.",
+  // Original fictional narrator persona — deliberately does not name or resemble any real actor/celebrity.
+  "parler-arulan": "Arulan is a fictional Tamil male narrator with a deep, resonant baritone voice and a warm, slightly rugged texture. He speaks with charismatic, confident and cinematic delivery, using controlled pacing, powerful pauses before important words, and energetic emphasis at the end of key sentences. His native Tamil pronunciation is clear and his tone is commanding yet compassionate. For devotional passages he carries deep reverence and spiritual warmth without ever sounding theatrical or aggressive. The recording is clear and has no background noise."
+};
+
+// English-language voice descriptions for the Sanatana Spirit (English) channel.
+export const voicePromptDescriptionsEn: Record<string, string> = {
+  "parler-jaya": "Jaya speaks in English in a clear and professional female voice. She speaks at a moderate speed with a natural and expressive tone. The recording is very clear and has no background noise.",
+  // Same original fictional narrator persona as the Tamil voice, adapted for English delivery.
+  "parler-arulan": "Arulan is a fictional male narrator with a deep, resonant baritone voice and a warm, slightly rugged texture, speaking in clear English. He speaks with charismatic, confident and cinematic delivery, using controlled pacing, powerful pauses before important words, and energetic emphasis at the end of key sentences. His tone is commanding yet compassionate. For spiritual passages he carries deep reverence and emotional warmth without ever sounding theatrical or aggressive. The recording is clear and has no background noise."
 };
 
 import { database } from "@/lib/database";
@@ -23,8 +32,9 @@ export const parlerSpeechProvider: SpeechProvider = {
     
     let voiceDescription = "";
     if (language === "ta") {
-      // Direct lookup from our new voice mapping
       voiceDescription = voicePromptDescriptions[voice] || voicePromptDescriptions["parler-jaya"];
+    } else if (language === "en") {
+      voiceDescription = voicePromptDescriptionsEn[voice] || voicePromptDescriptionsEn["parler-jaya"];
     }
 
     let sessionId = `tts-${Date.now()}`;
@@ -41,6 +51,7 @@ export const parlerSpeechProvider: SpeechProvider = {
       text,
       outputPath,
       voiceDescription,
+      language,
       projectId,
       sessionId
     });

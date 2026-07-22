@@ -1,18 +1,21 @@
 import fs from "node:fs/promises";
 import { config, type OutputLanguage, type VideoStyleConfig } from "@/lib/config";
 import type { ReviewProvider, SpeechProvider } from "./types";
-import { addProjectActualCost } from "@/lib/database";
+import { addProjectActualCost, addStoryCost } from "@/lib/database";
 
-function recordGeminiCallCost(projectId: number | undefined, stepName: string, data: any, isAudioOutput = false) {
-  if (!projectId) return;
+/** USD cost of one Gemini call from its usage metadata (gemini-2.5-flash rates). */
+export function geminiCallCost(data: any, isAudioOutput = false): number {
   const promptTokens = data?.usageMetadata?.promptTokenCount || 0;
   const candidatesTokens = data?.usageMetadata?.candidatesTokenCount || 0;
-  if (promptTokens === 0 && candidatesTokens === 0) return;
-
   const inputRate = 0.075 / 1_000_000;
-  const outputRate = (isAudioOutput ? 20.00 : 0.30) / 1_000_000;
-  const cost = (promptTokens * inputRate) + (candidatesTokens * outputRate);
-  addProjectActualCost(projectId, stepName, cost);
+  const outputRate = (isAudioOutput ? 20.0 : 0.30) / 1_000_000;
+  return promptTokens * inputRate + candidatesTokens * outputRate;
+}
+
+function recordGeminiCallCost(projectId: number | undefined, stepName: string, data: any, isAudioOutput = false): number {
+  const cost = geminiCallCost(data, isAudioOutput);
+  if (projectId && cost > 0) addProjectActualCost(projectId, stepName, cost);
+  return cost;
 }
 
 const languageNames: Record<OutputLanguage, string> = { ta: "Tamil", en: "English", hi: "Hindi" };
@@ -135,7 +138,16 @@ async function requestJson<T>(
     }
     const data = await requestWithFallback(models, {
       contents: [{ parts }],
-      generationConfig: { responseMimeType: "application/json", temperature: attempt === 0 ? temperature : 0.3 },
+      // Disable thinking + cap output: gemini-2.5-flash's unbounded thinking
+      // tokens can consume the whole budget and return empty parts
+      // ("Gemini பதில் காலியாக உள்ளது"). These JSON calls need no reasoning.
+      // (TTS uses its own request body and is unaffected.)
+      generationConfig: {
+        responseMimeType: "application/json",
+        temperature: attempt === 0 ? temperature : 0.3,
+        thinkingConfig: { thinkingBudget: 0 },
+        maxOutputTokens: 8192,
+      },
     });
     if (projectId && stepName) {
       recordGeminiCallCost(projectId, stepName, data);
@@ -211,7 +223,11 @@ function pcmToWav(pcm: Buffer, sampleRate = 24000) {
   return Buffer.concat([header, pcm]);
 }
 
-const voiceMap: Record<string, string> = { "ஆண் — இயல்பான": "Puck", "பெண் — இயல்பான": "Kore", "ஆண் — ஆற்றலான": "Charon", "பெண் — ஆற்றலான": "Aoede", "டிராமாட்டிக்": "Fenrir" };
+const voiceMap: Record<string, string> = {
+  "ஆண் — இயல்பான": "Puck", "பெண் — இயல்பான": "Kore", "ஆண் — ஆற்றலான": "Charon", "பெண் — ஆற்றலான": "Aoede", "டிராமாட்டிக்": "Fenrir",
+  "Male — Warm": "Puck", "Female — Warm": "Kore", "Male — Energetic": "Charon", "Female — Energetic": "Aoede", "Dramatic": "Fenrir",
+  "Male — Heroic/Firm": "Orus", "Female — Bright": "Leda", "Male — Deep/Informative": "Charon",
+};
 
 function splitTextIntoSentences(text: string): string[] {
   const parts = text.split(/([.!?\n]+)/);
@@ -237,23 +253,40 @@ function splitTextIntoSentences(text: string): string[] {
   return chunks;
 }
 
+// 24kHz 16-bit mono silence, used as a fallback so one un-voiceable chunk
+// doesn't fail the whole narration.
+function silencePcm(seconds: number, sampleRate = 24000): Buffer {
+  return Buffer.alloc(Math.max(0, Math.round(seconds * sampleRate)) * 2);
+}
+
 export const geminiSpeechProvider: SpeechProvider = {
-  async synthesize(text, outputPath, voice, language = "ta", projectId?: number) {
+  async synthesize(text, outputPath, voice, language = "ta", projectId?: number, storyId?: number) {
     const chunks = splitTextIntoSentences(text);
     const pcmBuffers: Buffer[] = [];
 
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
-      const data = await requestWithFallback(["gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts"], {
-        contents: [{ parts: [{ text: `${readInstruction[language]}: ${chunk}` }] }],
-        generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceMap[voice] || "Kore" } } } },
-      });
-      if (projectId) {
-        recordGeminiCallCost(projectId, "tts", data, true);
+      let audioBase64: string | undefined;
+      // The preview TTS models occasionally return a 200 with no audio part
+      // (transient, or a momentarily-flagged sentence). Retry a few times across
+      // both models before giving up on this single chunk.
+      for (let attempt = 0; attempt < 3 && !audioBase64; attempt++) {
+        const data = await requestWithFallback(["gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts"], {
+          contents: [{ parts: [{ text: `${readInstruction[language]}: ${chunk}` }] }],
+          generationConfig: { responseModalities: ["AUDIO"], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceMap[voice] || "Kore" } } } },
+        });
+        const ttsCost = recordGeminiCallCost(projectId, "tts", data, true);
+        if (storyId) addStoryCost(storyId, "tts", ttsCost);
+        audioBase64 = data?.candidates?.[0]?.content?.parts?.find((part: { inlineData?: { data?: string } }) => part.inlineData?.data)?.inlineData?.data;
+        if (!audioBase64 && attempt < 2) await delay(1500);
       }
-      const audioBase64 = data?.candidates?.[0]?.content?.parts?.find((part: { inlineData?: { data?: string } }) => part.inlineData?.data)?.inlineData?.data;
-      if (!audioBase64) throw new Error(`Gemini TTS audio text chunk ${i + 1} ஐ திருப்பவில்லை`);
-      pcmBuffers.push(Buffer.from(audioBase64, "base64"));
+      if (audioBase64) {
+        pcmBuffers.push(Buffer.from(audioBase64, "base64"));
+      } else {
+        // Still no audio after retries: insert a short silence so the rest of the
+        // narration (and the video) still renders instead of failing outright.
+        pcmBuffers.push(silencePcm(0.5));
+      }
     }
 
     if (pcmBuffers.length === 0) throw new Error("எந்த audio chunks-உம் உருவாக்கப்படவில்லை");

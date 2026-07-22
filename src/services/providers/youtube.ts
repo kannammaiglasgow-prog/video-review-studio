@@ -19,11 +19,25 @@ export function isYoutubeConfigured() {
   return Boolean(config.youtubeOAuth.clientId && config.youtubeOAuth.clientSecret);
 }
 
-export type ChannelType = "news" | "devotional";
+export type ChannelType = "news" | "devotional" | "sanatana" | "story" | "english";
+
+// Expected channel id for the English-stories channel (used to verify the right
+// brand channel was connected during OAuth):
+// https://studio.youtube.com/channel/UChYzuHgqdRL9AL5iNdJe9Ng ("English Stories")
+export const ENGLISH_CHANNEL_ID = "UChYzuHgqdRL9AL5iNdJe9Ng";
 
 function getTokenPath(channelType?: ChannelType) {
   if (channelType === "devotional") {
     return path.resolve(process.cwd(), "data/youtube-oauth-devotional.json");
+  }
+  if (channelType === "sanatana") {
+    return path.resolve(process.cwd(), "data/youtube-oauth-sanatana.json");
+  }
+  if (channelType === "story") {
+    return path.resolve(process.cwd(), "data/youtube-oauth-story.json");
+  }
+  if (channelType === "english") {
+    return path.resolve(process.cwd(), "data/youtube-oauth-english.json");
   }
   return config.youtubeOAuth.tokenPath;
 }
@@ -40,7 +54,10 @@ export function youtubeAuthUrl(redirectUri: string, state: string) {
   url.searchParams.set("response_type", "code");
   url.searchParams.set("scope", SCOPES);
   url.searchParams.set("access_type", "offline");
-  url.searchParams.set("prompt", "consent");
+  // select_account forces the account/brand-channel chooser (needed when one
+  // Google account owns several channels, so the user can pick the exact one);
+  // consent forces a fresh grant so the choice actually takes effect.
+  url.searchParams.set("prompt", "select_account consent");
   url.searchParams.set("state", state);
   return url.toString();
 }
@@ -92,7 +109,24 @@ export async function youtubeChannelInfo(channelType?: ChannelType): Promise<Cha
 }
 
 export async function disconnectYoutube(channelType?: ChannelType) {
-  await fsp.rm(getTokenPath(channelType), { force: true });
+  const tokenPath = getTokenPath(channelType);
+  // Revoke the grant at Google first, so the NEXT connect shows a fresh consent
+  // + brand-channel picker (essential for a Google account with several channels
+  // — otherwise Google silently auto-approves to the primary channel).
+  try {
+    if (fs.existsSync(tokenPath)) {
+      const stored = JSON.parse(await fsp.readFile(tokenPath, "utf8")) as StoredToken;
+      if (stored?.refreshToken) {
+        await fetch(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(stored.refreshToken)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        }).catch(() => {});
+      }
+    }
+  } catch {
+    /* ignore — still delete the local token below */
+  }
+  await fsp.rm(tokenPath, { force: true });
 }
 
 export async function setYoutubeThumbnail(videoId: string, filePath: string, channelType?: ChannelType) {
@@ -112,13 +146,14 @@ export async function setYoutubeThumbnail(videoId: string, filePath: string, cha
   }
 }
 
-export type YoutubeUploadInput = { filePath: string; title: string; description: string; tags?: string[]; privacyStatus: "private" | "unlisted" | "public" };
+export type YoutubeUploadInput = { filePath: string; title: string; description: string; tags?: string[]; privacyStatus: "private" | "unlisted" | "public"; language?: "ta" | "en" };
 
 export async function uploadToYoutube(input: YoutubeUploadInput, channelType?: ChannelType) {
   const token = await accessToken(channelType);
   const size = fs.statSync(input.filePath).size;
+  const lang = input.language || "ta";
   const metadata = {
-    snippet: { title: input.title.slice(0, 100), description: input.description.slice(0, 4900), tags: (input.tags || []).slice(0, 20), categoryId: "25", defaultLanguage: "ta", defaultAudioLanguage: "ta" },
+    snippet: { title: input.title.slice(0, 100), description: input.description.slice(0, 4900), tags: (input.tags || []).slice(0, 20), categoryId: "25", defaultLanguage: lang, defaultAudioLanguage: lang },
     status: { privacyStatus: input.privacyStatus, selfDeclaredMadeForKids: false },
   };
   const start = await fetch("https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status", {

@@ -93,6 +93,7 @@ export default function Home() {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [historyProjects, setHistoryProjects] = useState<any[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [clearingHistory, setClearingHistory] = useState(false);
 
   // Local Video Folders State
   const [folders, setFolders] = useState<any[]>([]);
@@ -134,6 +135,28 @@ export default function Home() {
       setLoadingHistory(false);
     }
   }, []);
+
+  async function clearHistory() {
+    const confirmed = window.confirm(
+      "எச்சரிக்கை: இது அனைத்து திட்ட வரலாறு மற்றும் local-ல் சேமிக்கப்பட்ட வீடியோ/ஆடியோ கோப்புகளை நிரந்தரமாக அழிக்கும். YouTube-ல் ஏற்கனவே upload செய்யப்பட்ட வீடியோக்கள் பாதிக்கப்படாது. தொடர வேண்டுமா?"
+    );
+    if (!confirmed) return;
+    setClearingHistory(true);
+    try {
+      const response = await fetch("/api/projects/clear-history", { method: "POST" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "வரலாற்றை அழிக்க முடியவில்லை");
+      setHistoryProjects([]);
+      setProjectId(null);
+      setStatus("idle");
+      setClips([]);
+      setMessage(`வரலாறு அழிக்கப்பட்டது — ${data.deletedProjects} திட்டங்கள் மற்றும் ${data.freedDirs} media கோப்புறைகள் நீக்கப்பட்டன.`);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "வரலாற்றை அழிக்க முடியவில்லை");
+    } finally {
+      setClearingHistory(false);
+    }
+  }
 
 
 
@@ -2241,6 +2264,17 @@ export default function Home() {
           ✕
         </button>
       </div>
+
+      {historyProjects.length > 0 && (
+        <button
+          type="button"
+          disabled={clearingHistory}
+          onClick={clearHistory}
+          className="choice text-xs mb-4 flex items-center justify-center gap-1.5 bg-red-950/20 hover:bg-red-950/40 border border-red-500/20 text-red-300 disabled:opacity-50"
+        >
+          {clearingHistory ? "அழிக்கப்படுகிறது..." : "🗑️ வரலாறு மற்றும் local storage-ஐ அழி (Clear History)"}
+        </button>
+      )}
 
       <div className="flex-1 overflow-y-auto space-y-4 pr-1 scrollbar-thin">
         {loadingHistory && (

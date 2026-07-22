@@ -167,7 +167,7 @@ async function processOneShort(title: string, region: Region, index: number, ses
   const tamilDate = getTamilDate();
   const timeOfDay = getTimeOfDay();
   const initialTitle = `${region.tamilName} | ${title.slice(0, 60)} | #Shorts`;
-  const instruction = `இது ${region.tamilName} பகுதியின் முக்கியச் செய்தி: "${title}". இதை வந்து 30 முதல் 60 விநாடிகள் நீளமுள்ள, ஆர்வமூட்டும் தமிழ் YouTube Shorts ஸ்கிரிப்டாக எழுதவும். குறுகியதாகவும் தெளிவாகவும் இருக்கட்டும்.`;
+  const instruction = `இது ${region.tamilName} பகுதியின் முக்கியச் செய்தி: "${title}". இதை வந்து 20 முதல் 60 விநாடிகள் நீளமுள்ள, ஆர்வமூட்டும் தமிழ் YouTube Shorts ஸ்கிரிப்டாக எழுதவும். குறுகியதாகவும் தெளிவாகவும் இருக்கட்டும்.`;
 
   writeLog(sessionId, "attempt", `🔄 Short (${index + 1}/10) — "${title.slice(0, 50)}..."`, "running", region.tamilName);
 

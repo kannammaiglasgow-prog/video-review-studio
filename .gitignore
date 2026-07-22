@@ -58,6 +58,10 @@ yarn-error.log*
 /.venv-local-tts/
 /models/
 
+# generated preview media (large, not source)
+/public/story-preview/
+/public/tts-preview/
+
 # vercel
 .vercel
 

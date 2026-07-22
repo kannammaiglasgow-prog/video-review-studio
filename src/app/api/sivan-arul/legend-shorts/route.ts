@@ -43,6 +43,7 @@ ${storyDetails}`;
     const db = database();
     const settings = db.prepare("SELECT selected_voice FROM auto_devotional_settings LIMIT 1").get() as { selected_voice: string } | undefined;
     const voice = typeof body.voice === "string" && body.voice ? body.voice : settings?.selected_voice || "parler-jaya";
+    const ttsProvider = body.ttsProvider === "local" ? "local" : "gemini";
 
     const insert = db.prepare(`
       INSERT INTO projects (
@@ -50,10 +51,10 @@ ${storyDetails}`;
         stance, tone, persona, voice, tts_provider,
         aspect_ratio, duration, transcript, output_language, status, custom_instruction, video_style,
         tier, cta_enabled, cta_position, b_roll_source, split_shorts_enabled, auto_approve
-      ) VALUES ('', 'text', 'rewrite', '00:00', '00:00', 'spiritual', 'Calm, peaceful, and confident', 'Devotional Guide', ?, 'gemini', '9:16', '60 விநாடிகள்', ?, 'ta', 'queued', ?, 'devotional', 'premium', 0, 'end', 'stock', 0, 1)
+      ) VALUES ('', 'text', 'rewrite', '00:00', '00:00', 'spiritual', 'Calm, peaceful, and confident', 'Devotional Guide', ?, ?, '9:16', '60 விநாடிகள்', ?, 'ta', 'queued', ?, 'devotional', 'premium', 0, 'end', 'stock', 0, 1)
     `);
 
-    const result = insert.run(voice, templeName, customInstruction);
+    const result = insert.run(voice, ttsProvider, templeName, customInstruction);
     const projectId = Number(result.lastInsertRowid);
 
     writeLog(sessionId, "start", `🛕 புராணக் கதை Shorts — "${templeName}" வீடியோ தயாரிப்பு தொடங்குகிறது...`, "running", templeName, projectId);

@@ -14,7 +14,8 @@ const voiceOptions = [
   { value: "parler-sundar", label: "Sundar (Professional Male)" },
   { value: "parler-karthik", label: "Karthik (Natural Male)" },
   { value: "parler-vasanth", label: "Vasanth (Calm Male)" },
-  { value: "parler-arvind", label: "Arvind (Fast Male)" }
+  { value: "parler-arvind", label: "Arvind (Fast Male)" },
+  { value: "parler-arulan", label: "Arulan (Cinematic Baritone Male) ✨" }
 ];
 
 const weekdayNames = [
@@ -248,11 +249,14 @@ export default function SivanArulPage() {
       <div style={{ maxWidth: 800, margin: "0 auto" }}>
 
         {/* Header */}
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 30 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 30, flexWrap: "wrap" }}>
           <Link href="/" style={{ color: "#fb923c", textDecoration: "none", fontSize: 14 }}>← முகப்பு</Link>
           <h1 style={{ fontSize: 24, fontWeight: 700, background: "linear-gradient(90deg, #fb923c, #facc15)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", margin: 0 }}>
             🕉️ சிவன் அருள் — பக்தி சேனல் தானியங்கி
           </h1>
+          <Link href="/sivan-arul/story-to-video" style={{ marginLeft: "auto", padding: "8px 16px", borderRadius: 8, background: "linear-gradient(135deg,#8b5cf6,#ec4899)", color: "#fff", fontWeight: 600, fontSize: 13, textDecoration: "none" }}>
+            📖 Story to Video
+          </Link>
         </div>
 
         {/* Top Info Alert */}
