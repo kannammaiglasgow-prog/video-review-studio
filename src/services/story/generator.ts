@@ -50,7 +50,55 @@ function parseJson<T>(raw: string): T {
   return JSON.parse(text) as T;
 }
 
+// Best-effort script detection (Unicode block counts) — used only on the
+// non-localize path to decide whether the input already matches the selected
+// narration language (skip Gemini entirely) or needs a literal translation.
+function detectScriptLanguage(text: string): OutputLanguage | "other" {
+  const ta = (text.match(/[஀-௿]/g) || []).length;
+  const hi = (text.match(/[ऀ-ॿ]/g) || []).length;
+  const en = (text.match(/[A-Za-z]/g) || []).length;
+  if (ta === 0 && hi === 0 && en === 0) return "other";
+  if (ta >= hi && ta >= en) return "ta";
+  if (hi >= en) return "hi";
+  return "en";
+}
+
+// Strict, non-creative translation: no expansion, no embellishment, no
+// duration targeting — used when Localize is off and the input isn't already
+// in the target language.
+async function literalTranslateScript(storyInput: string, language: OutputLanguage, storyId?: number): Promise<string> {
+  const langName = languageNames[language] || "Tamil";
+  const prompt = language === "en"
+    ? `Translate the following text into natural ${langName}. This must be a DIRECT, LITERAL translation ONLY — do not add, remove, expand, embellish, or creatively rephrase anything. Preserve the original meaning, tone, and length as closely as possible. No emoji, hashtags, or markdown.
+
+Text:
+${storyInput}
+
+Return ONLY JSON (escape newlines inside strings as \\n): {"translation": "..."}`
+    : `கீழே உள்ள உரையை இயல்பான ${langName} மொழியில் மொழிபெயர்க்கவும். இது ஒரு நேரடி, சொல்லுக்குச் சொல் (literal) மொழிபெயர்ப்பாக மட்டும் இருக்க வேண்டும் — எதையும் கூட்டவோ, குறைக்கவோ, விரிவாக்கவோ, படைப்பாற்றலுடன் மறுஎழுத்தும் செய்யவோ கூடாது. அதே பொருள், தொனி, நீளத்தை பேணவும். Emoji, hashtags, markdown வேண்டாம்.
+
+உரை:
+${storyInput}
+
+JSON மட்டும் தாருங்கள் (strings-க்குள் newline-ஐ \\n ஆக escape செய்யவும்): {"translation": "..."}`;
+
+  const raw = await geminiText(prompt, 0.2, storyId ? { storyId, step: "translate" } : undefined);
+  const data = parseJson<{ translation?: string }>(raw);
+  const out = typeof data.translation === "string" ? data.translation.trim() : "";
+  if (!out) throw new Error("மொழிபெயர்ப்பு உருவாக்கவில்லை");
+  return out;
+}
+
 export async function expandScriptForDuration(storyInput: string, durationSeconds: number, storyId?: number, language: OutputLanguage = "ta", localize = false): Promise<string> {
+  if (!localize) {
+    // No creative changes at all: use the story exactly as given if it's
+    // already in the target language; otherwise do a strict literal
+    // translation only (no rewriting, no duration-based expand/condense).
+    const detected = detectScriptLanguage(storyInput);
+    if (detected === language) return storyInput.trim();
+    return literalTranslateScript(storyInput, language, storyId);
+  }
+
   const targetChars = Math.round(durationSeconds * (charsPerSecondFor[language] || 12.5));
   const langName = languageNames[language] || "Tamil";
   const seconds = Math.round(durationSeconds);
@@ -58,16 +106,12 @@ export async function expandScriptForDuration(storyInput: string, durationSecond
   // Concrete before/after examples force actual SUBSTITUTION with equivalent
   // local names/places, not transliteration (writing the same foreign name in
   // Tamil script) — a real risk the model defaults to otherwise.
-  const localizeEn = localize
-    ? `\n- FULL CULTURAL LOCALIZATION (CRITICAL): this is a REPLACEMENT, not a transliteration. Every person's name and every place name must be SWAPPED for a DIFFERENT, equivalent ${langName}-culture name/place — never spell the original foreign name in ${langName} script/pronunciation.
+  const localizeEn = `\n- FULL CULTURAL LOCALIZATION (CRITICAL): this is a REPLACEMENT, not a transliteration. Every person's name and every place name must be SWAPPED for a DIFFERENT, equivalent ${langName}-culture name/place — never spell the original foreign name in ${langName} script/pronunciation.
   Example: "John Smith from New York" must become something like "Arjun Kumar from Chennai" (a genuinely different, native ${langName} name and a real ${langName}-region place) — NOT "ஜான் ஸ்மித் நியூயார்க்கிலிருந்து" (that is transliteration, which is WRONG).
-  Also localize food, festivals, currency, and customs to match. Keep the plot, emotions, and message exactly the same — only WHO and WHERE change.`
-    : "";
-  const localizeTa = localize
-    ? `\n- முழுமையான கலாச்சார LOCALIZATION (மிக முக்கியம்): இது ஒரு REPLACEMENT — transliteration அல்ல. ஒவ்வொரு நபரின் பெயரும், ஒவ்வொரு இடப்பெயரும் **முற்றிலும் வேறான**, சமமான ${langName} கலாச்சார பெயர்/இடமாக மாற்றப்பட வேண்டும் — மூலப்பெயரை ${langName} எழுத்தில் அப்படியே எழுதக்கூடாது (உச்சரிப்பு மாற்றம் மட்டும் போதாது).
+  Also localize food, festivals, currency, and customs to match. Keep the plot, emotions, and message exactly the same — only WHO and WHERE change.`;
+  const localizeTa = `\n- முழுமையான கலாச்சார LOCALIZATION (மிக முக்கியம்): இது ஒரு REPLACEMENT — transliteration அல்ல. ஒவ்வொரு நபரின் பெயரும், ஒவ்வொரு இடப்பெயரும் **முற்றிலும் வேறான**, சமமான ${langName} கலாச்சார பெயர்/இடமாக மாற்றப்பட வேண்டும் — மூலப்பெயரை ${langName} எழுத்தில் அப்படியே எழுதக்கூடாது (உச்சரிப்பு மாற்றம் மட்டும் போதாது).
   உதாரணம்: "John Smith from New York" என்பது "அர்ஜுன் குமார், சென்னையிலிருந்து" போன்ற **உண்மையான வேறு** ${langName} பெயராகவும் இடமாகவும் மாற வேண்டும் — "ஜான் ஸ்மித் நியூயார்க்கிலிருந்து" (இது transliteration, இது **தவறு**) என எழுதக்கூடாது.
-  உணவு, பண்டிகைகள், நாணயம், வழக்கங்களையும் இதற்கேற்ப மாற்றவும். கதை, உணர்வுகள், செய்தி மாறாமல் இருக்கட்டும் — யார், எங்கே என்பது மட்டும் மாறும்.`
-    : "";
+  உணவு, பண்டிகைகள், நாணயம், வழக்கங்களையும் இதற்கேற்ப மாற்றவும். கதை, உணர்வுகள், செய்தி மாறாமல் இருக்கட்டும் — யார், எங்கே என்பது மட்டும் மாறும்.`;
 
   const prompt = language === "en"
     ? `You are a YouTube storyteller. Based on the source story/news below, write an emotional, clear ENGLISH narration script.
@@ -109,7 +153,7 @@ export async function generateSceneBreakdown(script: string, durationSeconds: nu
   const sceneCount = Math.max(4, Math.min(40, Math.round(durationSeconds / 6)));
   const prompt = `கீழே உள்ள ${langName} narration script-ஐ காலவரிசைப்படி சரியாக ${sceneCount} காட்சிகளாக (scenes) பிரிக்கவும். ஒவ்வொரு காட்சிக்கும்:
 1. "narrationExcerpt": அந்த காட்சியின் போது பேசப்படும் script-ன் ${langName} பகுதி (சுருக்கமாக, exact text — same language as the script).
-2. "prompt": அந்த காட்சிக்கான ஒரு விரிவான English image-generation prompt (Google Flow / Nano Banana / Midjourney style, cinematic, photorealistic அல்லது painterly, 16:9, real நபர்களை குறிப்பிட்ட பெயரால் அடையாளப்படுத்தாமல் — silhouettes/symbolic/generic depiction பயன்படுத்தவும் இது ஒரு உண்மைக் கதையாக இருந்தால்).
+2. "prompt": அந்த காட்சிக்கான ஒரு விரிவான English image-generation prompt (any AI image generator style — cinematic, photorealistic அல்லது painterly, 16:9, real நபர்களை குறிப்பிட்ட பெயரால் அடையாளப்படுத்தாமல் — silhouettes/symbolic/generic depiction பயன்படுத்தவும் இது ஒரு உண்மைக் கதையாக இருந்தால்). இது manual reference-க்காக மட்டும் — scene description ஆக காட்டப்படும்.
 3. "searchTerms": அந்த காட்சிக்கு பொருத்தமான 2-3 சுருக்கமான English stock-footage தேடல் சொற்கள் (Pexels/Pixabay-ல் தேட ஏற்றவை — எ.கா. "rural indian village sunset", "woman walking road"; ambiguous சொற்களை முழு video context வைத்து disambiguate செய்யவும்).
 
 Script:
@@ -134,7 +178,7 @@ JSON மட்டும் தாருங்கள்: {"scenes": [{"narrationE
 }
 
 export async function generateThumbnailPrompt(script: string, title: string, storyId?: number): Promise<string> {
-  const prompt = `You are a YouTube thumbnail art director. Based on the video's title and narration script below, write ONE detailed English image-generation prompt for a HIGH-CTR YouTube thumbnail (for Google Flow / Nano Banana / Midjourney).
+  const prompt = `You are a YouTube thumbnail art director. Based on the video's title and narration script below, write ONE detailed English image-generation prompt for a HIGH-CTR YouTube thumbnail (for any AI image generator, e.g. Nano Banana, Midjourney).
 
 Guidelines:
 - Visually compelling, high contrast, dramatic lighting, clean uncluttered background, optimized for small mobile screens.

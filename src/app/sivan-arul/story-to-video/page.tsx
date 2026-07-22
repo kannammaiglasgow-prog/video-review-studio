@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ClipboardEvent } from "react";
 import Link from "next/link";
 
 type Scene = { prompt: string; seconds: number; narrationExcerpt: string };
@@ -57,8 +57,7 @@ const statusLabels: Record<string, string> = {
   generating: "📝 Script எழுதப்படுகிறது...",
   writing_scenes: "🎬 Scene breakdown + image prompts உருவாக்கப்படுகிறது...",
   generating_audio: "🎙️ Gemini TTS narration உருவாக்கப்படுகிறது...",
-  script_ready: "✅ Script + Audio + Prompts தயார்! இப்போது Flow-ல் படங்கள் create செய்யவும்.",
-  generating_images: "🎨 Flow-ல் படங்கள் தானாக உருவாக்கப்படுகிறது... (Chrome window-ல் login/CAPTCHA தேவைப்பட்டால் handle செய்யுங்கள்)",
+  script_ready: "✅ Script + Audio + Media தயார்!",
   fetching_media: "🎬 Copyright-free stock media (Pexels/Pixabay) fetch ஆகிறது...",
   rendering: "🎞️ Video render ஆகிறது...",
   rendered: "✅ Video ரெடி!",
@@ -80,8 +79,7 @@ export default function StoryToVideoPage() {
   const [bgm, setBgm] = useState(true);
   const [animate, setAnimate] = useState(true);
   const [language, setLanguage] = useState<"ta" | "en">("ta");
-  const [mediaSource, setMediaSource] = useState<"flow" | "stock">("flow");
-  const [ttsMode, setTtsMode] = useState<"free" | "paid">("paid");
+  const [ttsMode, setTtsMode] = useState<"free" | "paid">("free");
   const [localize, setLocalize] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [message, setMessage] = useState("");
@@ -95,11 +93,52 @@ export default function StoryToVideoPage() {
   const [description, setDescription] = useState("");
   const [tags, setTags] = useState("");
   const [channel, setChannel] = useState("story");
-  const [privacy, setPrivacy] = useState<"private" | "unlisted" | "public">("private");
+  const [privacy, setPrivacy] = useState<"private" | "unlisted" | "public">("public");
   const [uploading, setUploading] = useState(false);
   const [channelStatus, setChannelStatus] = useState<{ connected: boolean; channel?: { id: string; title: string }; matchesExpected?: boolean } | null>(null);
   const [channelBusy, setChannelBusy] = useState(false);
+  const [imageAnalyzing, setImageAnalyzing] = useState(false);
+  const [pastedImagePreview, setPastedImagePreview] = useState<string | null>(null);
   const fileInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
+
+  // Paste an image directly into the story textarea (Ctrl+V) — Gemini vision
+  // looks at it and writes a story-starter description, inserted into the box.
+  const handleStoryPaste = async (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const item = Array.from(e.clipboardData.items).find((it) => it.type.startsWith("image/"));
+    if (!item) return; // normal text paste — let the browser handle it as usual
+    e.preventDefault();
+    const file = item.getAsFile();
+    if (!file) return;
+
+    setPastedImagePreview(URL.createObjectURL(file));
+    setImageAnalyzing(true);
+    setMessage("");
+    try {
+      const dataUrl: string = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const base64 = dataUrl.split(",")[1] || "";
+      const res = await fetch("/api/sivan-arul/story-to-video/describe-image", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mimeType: file.type, data: base64, language }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setStory((prev) => (prev.trim() ? `${prev.trim()}\n\n${data.description}` : data.description));
+        setMessage("✅ Image-ஐ Gemini பார்த்து, அதற்கான கதை உரை story box-ல் சேர்க்கப்பட்டது.");
+      } else {
+        setMessage(`❌ ${data.error}`);
+      }
+    } catch {
+      setMessage("❌ Image analysis தோல்வி — மீண்டும் முயற்சிக்கவும்");
+    } finally {
+      setImageAnalyzing(false);
+    }
+  };
 
   const fetchProject = useCallback(async (id: number) => {
     try {
@@ -144,7 +183,7 @@ export default function StoryToVideoPage() {
       const res = await fetch("/api/sivan-arul/story-to-video", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ story, durationSeconds: durationMinutes * 60, voice, aspectRatio, bgm, animate, language, mediaSource, ttsMode, localize }),
+        body: JSON.stringify({ story, durationSeconds: durationMinutes * 60, voice, aspectRatio, bgm, animate, language, ttsMode, localize }),
       });
       const data = await res.json();
       if (data.success) {
@@ -174,23 +213,6 @@ export default function StoryToVideoPage() {
     Array.from(files).forEach((file) => formData.append("batch", file));
     await fetch(`/api/sivan-arul/story-to-video/${projectId}/images`, { method: "POST", body: formData });
     fetchProject(projectId);
-  };
-
-  const [flowBusy, setFlowBusy] = useState(false);
-  const generateInFlow = async () => {
-    if (!projectId) return;
-    setFlowBusy(true);
-    setMessage("");
-    try {
-      const res = await fetch(`/api/sivan-arul/story-to-video/${projectId}/flow-generate`, { method: "POST" });
-      const data = await res.json();
-      if (!data.success) setMessage(`❌ ${data.error}`);
-      else setMessage("🎨 Flow-ல் படங்கள் உருவாக்கத் தொடங்கியது — Chrome window திறக்கும்; முதல் முறை login தேவைப்பட்டால் அங்கே செய்யுங்கள். படங்கள் தானாக நிரம்பும்.");
-    } catch {
-      setMessage("❌ Flow generation தொடங்க முடியவில்லை");
-    } finally {
-      setFlowBusy(false);
-    }
   };
 
   const renderVideoNow = async () => {
@@ -317,7 +339,7 @@ export default function StoryToVideoPage() {
         </div>
         <h1 style={{ fontSize: 28, marginBottom: 4 }}>📖 Story to Video</h1>
         <p style={{ color: "#a0a0c0", marginBottom: 24, fontSize: 14 }}>
-          கதை/செய்தியை பேஸ்ட் செய்யுங்கள், duration + voice select செய்யுங்கள் — Gemini script, narration audio, image prompts தயார் செய்யும். நீங்க Flow-ல் படங்கள் create செய்து upload செய்தால், வீடியோ ரெண்டர் ஆகும்.
+          கதை/செய்தியை பேஸ்ட் செய்யுங்கள், duration + voice select செய்யுங்கள் — Gemini script, narration audio, copyright-free stock media தானாக தயார் செய்து வீடியோ ரெண்டர் செய்யும்.
         </p>
 
         {message && (
@@ -333,13 +355,25 @@ export default function StoryToVideoPage() {
             <textarea
               value={story}
               onChange={(e) => setStory(e.target.value)}
+              onPaste={handleStoryPaste}
               rows={8}
-              placeholder="இங்கே உங்கள் கதை அல்லது செய்தியை பேஸ்ட் செய்யுங்கள்..."
-              style={{ ...input, resize: "vertical", marginBottom: 12 }}
+              placeholder="இங்கே உங்கள் கதை அல்லது செய்தியை பேஸ்ட் செய்யுங்கள்... (ஒரு image-ஐயும் இங்கே Ctrl+V paste செய்யலாம் — Gemini அதைப் பார்த்து கதை உரை எழுதும்)"
+              style={{ ...input, resize: "vertical", marginBottom: 8 }}
             />
+            {(pastedImagePreview || imageAnalyzing) && (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, padding: 8, background: "#0f0f1e", borderRadius: 8, border: "1px solid #3a3a5a" }}>
+                {pastedImagePreview && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={pastedImagePreview} alt="Pasted" style={{ width: 48, height: 48, objectFit: "cover", borderRadius: 6 }} />
+                )}
+                <span style={{ fontSize: 12, color: "#c0c0d8" }}>
+                  {imageAnalyzing ? "🖼️ Gemini image-ஐ பார்த்து கதை எழுதுகிறது..." : "🖼️ Image பார்க்கப்பட்டு, கதை உரை சேர்க்கப்பட்டது"}
+                </span>
+              </div>
+            )}
             <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", marginBottom: 16, fontSize: 13, color: "#c0c0d8" }}>
               <input type="checkbox" checked={localize} onChange={(e) => setLocalize(e.target.checked)} style={{ marginTop: 3 }} />
-              <span>🌏 <b>Localize to the selected language&apos;s culture</b> — names &amp; places adapt to the language (e.g. English story + Tamil → Tamil names, Tamil places, native Tamil story). Off = keep original, just translate.</span>
+              <span>🌏 <b>Localize to the selected language&apos;s culture</b> — names &amp; places adapt to the language (e.g. English story + Tamil → Tamil names, Tamil places, native Tamil story). Off = no changes at all — same-language story is used exactly as typed, a different-language story gets a literal translation only (no rewriting).</span>
             </label>
             <div style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap" }}>
               <div style={{ flex: "1 1 200px" }}>
@@ -366,13 +400,6 @@ export default function StoryToVideoPage() {
                 <select value={aspectRatio} onChange={(e) => setAspectRatio(e.target.value as "16:9" | "9:16")} style={input}>
                   <option value="16:9">🖥️ Long — Landscape (16:9)</option>
                   <option value="9:16">📱 Short — Vertical (9:16, Shorts/Reels)</option>
-                </select>
-              </div>
-              <div style={{ flex: "1 1 200px" }}>
-                <label style={label}>Scene media</label>
-                <select value={mediaSource} onChange={(e) => setMediaSource(e.target.value as "flow" | "stock")} style={input}>
-                  <option value="flow">🎨 AI images (Google Flow)</option>
-                  <option value="stock">🎬 Stock — copyright-free (Pexels/Pixabay)</option>
                 </select>
               </div>
               <div style={{ flex: "1 1 200px" }}>
@@ -412,7 +439,7 @@ export default function StoryToVideoPage() {
                 <span style={{ fontSize: 13, color: "#c0c0d8" }}>
                   🗣️ {project.language === "en" ? "English" : "தமிழ்"}
                   {project.localize ? " 🌏Localized" : ""}
-                  {" · "}{project.mediaSource === "stock" ? "🎬 Stock" : "🎨 Flow AI"}
+                  {" · "}🎬 Stock
                   {" · "}{project.ttsMode === "free" ? "🆓 Free TTS" : "💎 Paid TTS"}
                   {" · "}{project.aspectRatio === "9:16" ? "📱 Short 9:16" : "🖥️ Long 16:9"}
                   {" · "}🎵 BGM {project.bgmEnabled ? "On" : "Off"}
@@ -428,7 +455,7 @@ export default function StoryToVideoPage() {
                 </div>
               )}
               <div style={{ marginTop: 8, fontSize: 11, color: "#707090" }}>
-                🖼️ Flow images use Google Flow PRO credits (not billed as $ API here). Cost above = Gemini script + scenes + TTS + SEO.
+                Cost above = Gemini script + scenes + TTS + SEO.
               </div>
             </div>
 
@@ -445,20 +472,9 @@ export default function StoryToVideoPage() {
             {scriptReady && project.scenes.length > 0 && (
               <div style={box}>
                 <label style={label}>Scene Media</label>
-                {project.mediaSource === "stock" ? (
-                  <div style={{ marginBottom: 14, padding: 12, background: "#0f0f1e", borderRadius: 8, border: "1px solid #2d5a3a", fontSize: 12, color: "#a0a0c0" }}>
-                    🎬 Copyright-free stock media (Pexels/Pixabay) — scene keywords வைத்து video/images தானாக fetch ஆகும். ஏதேனும் scene காலியாக இருந்தால் கீழே manual-ஆ upload செய்யலாம்.
-                  </div>
-                ) : (
-                  <div style={{ marginBottom: 14, padding: 12, background: "#0f0f1e", borderRadius: 8, border: "1px solid #3a2d5a" }}>
-                    <button onClick={generateInFlow} disabled={flowBusy || project.status === "generating_images"} style={(flowBusy || project.status === "generating_images") ? btnDisabled : btn}>
-                      {project.status === "generating_images" ? "🎨 Flow-ல் உருவாக்குகிறது..." : "🎨 Flow-ல் தானாக படங்கள் உருவாக்கு"}
-                    </button>
-                    <div style={{ fontSize: 12, color: "#a0a0c0", marginTop: 8 }}>
-                      Google Flow browser-ஐத் திறந்து, ஒவ்வொரு prompt-ஐயும் தானாக generate செய்து படங்களை download செய்யும் — scenes வரிசைப்படி தானாக நிரம்பும். (முதல் முறை Chrome window-ல் Google login செய்யுங்கள்.) அல்லது கீழே manual ஆக upload செய்யலாம்.
-                    </div>
-                  </div>
-                )}
+                <div style={{ marginBottom: 14, padding: 12, background: "#0f0f1e", borderRadius: 8, border: "1px solid #2d5a3a", fontSize: 12, color: "#a0a0c0" }}>
+                  🎬 Copyright-free stock media (Pexels/Pixabay) — scene keywords வைத்து video/images தானாக fetch ஆகும். ஏதேனும் scene காலியாக இருந்தால் கீழே manual-ஆ upload செய்யலாம்.
+                </div>
                 <div style={{ marginBottom: 12 }}>
                   <label style={label}>⚡ Bulk upload (காலியான scenes-ல் வரிசைப்படி நிரப்பும்)</label>
                   <input type="file" accept="image/*" multiple onChange={(e) => e.target.files && uploadBatch(e.target.files)} style={input} />
@@ -530,7 +546,7 @@ export default function StoryToVideoPage() {
                   value={thumbPrompt}
                   onChange={(e) => setThumbPrompt(e.target.value)}
                   rows={4}
-                  placeholder="'✨ Generate' அழுத்தினால், high-CTR thumbnail-க்கான English image prompt இங்கே வரும் — Flow / Nano Banana-ல் paste செய்து thumbnail உருவாக்கவும்."
+                  placeholder="'✨ Generate' அழுத்தினால், high-CTR thumbnail-க்கான English image prompt இங்கே வரும் — எந்த AI image tool-லும் (Nano Banana, Midjourney, etc.) paste செய்து thumbnail உருவாக்கவும்."
                   style={{ ...input, resize: "vertical", marginBottom: 16 }}
                 />
                 <div style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap" }}>

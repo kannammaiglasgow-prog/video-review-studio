@@ -43,7 +43,7 @@ export async function GET(_request: Request, context: { params: Promise<{ id: st
     bgmEnabled: row.bgm_enabled === 1,
     animateEnabled: row.animate_enabled !== 0,
     language: row.language || "ta",
-    mediaSource: row.media_source || "flow",
+    mediaSource: row.media_source || "stock",
     ttsMode: row.tts_mode || "paid",
     localize: row.localize === 1,
     thumbnailPrompt: row.thumbnail_prompt || "",

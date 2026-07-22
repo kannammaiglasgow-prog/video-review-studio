@@ -22,7 +22,9 @@ export async function POST(request: Request) {
     const bgm = Boolean(body.bgm);
     const animate = body.animate !== false; // default on
     const language: "ta" | "en" = body.language === "en" ? "en" : "ta";
-    const mediaSource: "flow" | "stock" = body.mediaSource === "stock" ? "stock" : "flow";
+    // Scene media is always copyright-free stock (Pexels/Pixabay) — Google Flow
+    // browser-automation has been removed.
+    const mediaSource = "stock" as const;
     const ttsMode: "free" | "paid" = body.ttsMode === "free" ? "free" : "paid";
     const localize = Boolean(body.localize);
 
@@ -57,35 +59,33 @@ export async function POST(request: Request) {
           scenes_json: JSON.stringify(rescaledScenes),
           audio_path: audioPath,
           audio_duration: audioDuration,
-          status: mediaSource === "stock" ? "fetching_media" : "script_ready",
+          status: "fetching_media",
         });
 
-        // Stock media source: auto-fetch copyright-free video/images (Pexels/Pixabay)
-        // per scene so the video is ready without Google Flow. Fully automatic.
-        if (mediaSource === "stock") {
-          try {
-            const orientation = aspectRatio === "9:16" ? "portrait" : "landscape";
-            const sceneSearchTerms = rescaledScenes.map((s) =>
-              s.searchTerms?.length ? s.searchTerms : [s.narrationExcerpt || s.prompt].filter(Boolean),
-            );
-            const { files } = await downloadScenedStockMedia(sceneSearchTerms, orientation, mediaDir);
-            // downloadScenedStockMedia writes stock-<i>.<ext>; the render pipeline
-            // expects scene_<i>.<ext>, so rename each into place (order = scene index).
-            for (let i = 0; i < files.length; i++) {
-              const ext = path.extname(files[i]);
-              await fsp.rename(files[i], path.join(mediaDir, `scene_${i}${ext}`)).catch(() => {});
-            }
-            const gotAll = files.length > 0 && files.length === rescaledScenes.length;
-            updateStoryProject(projectId, {
-              status: "script_ready",
-              error_message: gotAll ? null : "சில scenes-க்கு stock media கிடைக்கவில்லை — keywords-ஐ மாற்றவும், அல்லது manual upload / Flow பயன்படுத்தவும்",
-            });
-          } catch (stockError) {
-            updateStoryProject(projectId, {
-              status: "script_ready",
-              error_message: `Stock media fetch பிழை: ${stockError instanceof Error ? stockError.message : String(stockError)}`,
-            });
+        // Auto-fetch copyright-free video/images (Pexels/Pixabay) per scene so
+        // the video is ready with no manual step. Fully automatic.
+        try {
+          const orientation = aspectRatio === "9:16" ? "portrait" : "landscape";
+          const sceneSearchTerms = rescaledScenes.map((s) =>
+            s.searchTerms?.length ? s.searchTerms : [s.narrationExcerpt || s.prompt].filter(Boolean),
+          );
+          const { files } = await downloadScenedStockMedia(sceneSearchTerms, orientation, mediaDir);
+          // downloadScenedStockMedia writes stock-<i>.<ext>; the render pipeline
+          // expects scene_<i>.<ext>, so rename each into place (order = scene index).
+          for (let i = 0; i < files.length; i++) {
+            const ext = path.extname(files[i]);
+            await fsp.rename(files[i], path.join(mediaDir, `scene_${i}${ext}`)).catch(() => {});
           }
+          const gotAll = files.length > 0 && files.length === rescaledScenes.length;
+          updateStoryProject(projectId, {
+            status: "script_ready",
+            error_message: gotAll ? null : "சில scenes-க்கு stock media கிடைக்கவில்லை — keywords-ஐ மாற்றவும், அல்லது கீழே manual-ஆக upload செய்யவும்",
+          });
+        } catch (stockError) {
+          updateStoryProject(projectId, {
+            status: "script_ready",
+            error_message: `Stock media fetch பிழை: ${stockError instanceof Error ? stockError.message : String(stockError)}`,
+          });
         }
       } catch (error) {
         updateStoryProject(projectId, { status: "failed", error_message: error instanceof Error ? error.message : String(error) });

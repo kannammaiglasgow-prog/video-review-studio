@@ -159,6 +159,26 @@ async function requestJson<T>(
   throw new Error(`Gemini சரியான JSON திருப்பவில்லை — மீண்டும் முயற்சிக்கவும் (${lastError instanceof Error ? lastError.message : "parse error"})`);
 }
 
+/** Gemini vision: look at a pasted image and write a short story-starter from it. */
+export async function describeImageForStory(image: { mimeType: string; data: string }, language: OutputLanguage = "ta"): Promise<string> {
+  const langName = language === "en" ? "English" : language === "hi" ? "Hindi" : "Tamil";
+  const prompt = language === "en"
+    ? `Look at this image carefully and write a short, vivid story-starter (3-5 sentences) in ENGLISH describing what is happening in it — as if it were the opening of a narrated YouTube story video. Plain natural prose only, no markdown, no emoji. Return ONLY JSON: {"description": "..."}`
+    : `இந்தப் படத்தை கவனமாகப் பாருங்கள், அதில் என்ன நடக்கிறது என்பதை ஒரு YouTube கதை வீடியோவின் ஆரம்பப் பகுதி போல ${langName}-ல் 3-5 வாக்கியங்களில் விவரிக்கவும். இயல்பான உரை நடையில் மட்டும் எழுதவும் — markdown, emoji வேண்டாம். JSON மட்டும் தாருங்கள்: {"description": "..."}`;
+
+  const result = await requestJson<{ description?: string }>(
+    ["gemini-2.5-flash", "gemini-3.1-flash-lite"],
+    prompt,
+    0.6,
+    undefined,
+    undefined,
+    image,
+  );
+  const out = typeof result.description === "string" ? result.description.trim() : "";
+  if (!out) throw new Error("Gemini இந்தப் படத்தை விவரிக்கவில்லை");
+  return out;
+}
+
 function parseSceneKeywords(value: unknown, sceneCount: number): string[][] {
   if (!Array.isArray(value)) return [];
   const groups = value
