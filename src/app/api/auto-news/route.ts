@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { REGIONS, isAutoNewsEnabled, setAutoNewsEnabled, runSelectedRegionsAutoNews, isAutoShortsEnabled, setAutoShortsEnabled, runAutoShortsPipeline, getAutoNewsVoice, setAutoNewsVoice, runAllShortsPipelineManual, getAutoNewsTtsMode, setAutoNewsTtsMode } from "@/services/personal/auto-news";
+import { REGIONS, isAutoNewsEnabled, setAutoNewsEnabled, runSelectedRegionsAutoNews, isAutoShortsEnabled, setAutoShortsEnabled, runAutoShortsPipeline, getAutoNewsVoice, setAutoNewsVoice, runAllShortsPipelineManual, getAutoNewsTtsMode, setAutoNewsTtsMode, getAutoNewsSchedule, setAutoNewsSchedule } from "@/services/personal/auto-news";
 
 export const runtime = "nodejs";
 export const maxDuration = 600;
@@ -11,6 +11,7 @@ export async function GET() {
     shortsEnabled: isAutoShortsEnabled(),
     selectedVoice: getAutoNewsVoice(),
     ttsMode: getAutoNewsTtsMode(),
+    schedule: getAutoNewsSchedule(),
     regions: REGIONS.map(r => ({ name: r.name, tamilName: r.tamilName }))
   });
 }
@@ -42,6 +43,12 @@ export async function POST(request: Request) {
     if (body.ttsMode === "free" || body.ttsMode === "paid") {
       setAutoNewsTtsMode(body.ttsMode);
       return NextResponse.json({ success: true, ttsMode: body.ttsMode });
+    }
+
+    // Update the automation schedule (times + which regions run automatically)
+    if (body.schedule && typeof body.schedule === "object") {
+      setAutoNewsSchedule(body.schedule);
+      return NextResponse.json({ success: true, schedule: getAutoNewsSchedule() });
     }
 
     // Manual trigger for selected news regions

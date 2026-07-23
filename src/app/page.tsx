@@ -37,6 +37,12 @@ export default function StyleSelection() {
           </div>
           <div className="flex items-center gap-3">
             <button
+              onClick={() => router.push("/dashboard")}
+              className="px-3.5 py-2 text-xs font-semibold rounded-lg bg-gradient-to-r from-emerald-600 to-teal-500 hover:from-emerald-500 hover:to-teal-400 border border-emerald-500/20 text-white transition flex items-center gap-1.5"
+            >
+              🏠 Dashboard
+            </button>
+            <button
               onClick={() => router.push("/sivan-arul")}
               className="px-3.5 py-2 text-xs font-semibold rounded-lg bg-gradient-to-r from-orange-600 to-amber-500 hover:from-orange-500 hover:to-amber-400 border border-orange-500/20 text-white transition flex items-center gap-1.5"
             >

@@ -107,6 +107,60 @@ export function setAutoNewsTtsMode(mode: AutoNewsTtsMode): void {
   db.prepare("UPDATE auto_news_settings SET tts_mode=?, updated_at=CURRENT_TIMESTAMP WHERE id=1").run(mode);
 }
 
+// ── Configurable schedule (times + which regions run automatically) ─────────
+export type AutoNewsSchedule = {
+  longVideoTimes: string[]; // "HH:MM" 24h, one long-form run (all selectedRegions) per entry
+  shortsTimes: string[]; // "HH:MM" 24h, one Short per entry
+  selectedRegions: string[]; // region names from REGIONS, used by the scheduled (not manual) runs
+};
+
+function parseTimesJson(text: string | undefined, fallback: string[]): string[] {
+  if (!text) return fallback;
+  try {
+    const parsed = JSON.parse(text);
+    return Array.isArray(parsed) && parsed.every((t) => typeof t === "string") ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+const DEFAULT_LONG_TIMES = ["08:00", "15:00"];
+const DEFAULT_SHORTS_TIMES = ["09:00", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "16:00", "17:00", "18:00"];
+const DEFAULT_REGIONS = REGIONS.map((r) => r.name);
+
+export function getAutoNewsSchedule(): AutoNewsSchedule {
+  try {
+    const db = database();
+    const row = db.prepare(
+      "SELECT long_video_times, shorts_times, selected_regions FROM auto_news_settings WHERE id=1"
+    ).get() as { long_video_times: string; shorts_times: string; selected_regions: string } | undefined;
+    return {
+      longVideoTimes: parseTimesJson(row?.long_video_times, DEFAULT_LONG_TIMES),
+      shortsTimes: parseTimesJson(row?.shorts_times, DEFAULT_SHORTS_TIMES),
+      selectedRegions: parseTimesJson(row?.selected_regions, DEFAULT_REGIONS),
+    };
+  } catch {
+    return { longVideoTimes: DEFAULT_LONG_TIMES, shortsTimes: DEFAULT_SHORTS_TIMES, selectedRegions: DEFAULT_REGIONS };
+  }
+}
+
+function isValidTimeList(times: unknown): times is string[] {
+  return Array.isArray(times) && times.length > 0 && times.every((t) => typeof t === "string" && /^([01]\d|2[0-3]):([0-5]\d)$/.test(t));
+}
+
+export function setAutoNewsSchedule(update: Partial<AutoNewsSchedule>): void {
+  const db = database();
+  if (update.longVideoTimes && isValidTimeList(update.longVideoTimes)) {
+    db.prepare("UPDATE auto_news_settings SET long_video_times=?, updated_at=CURRENT_TIMESTAMP WHERE id=1").run(JSON.stringify(update.longVideoTimes));
+  }
+  if (update.shortsTimes && isValidTimeList(update.shortsTimes)) {
+    db.prepare("UPDATE auto_news_settings SET shorts_times=?, updated_at=CURRENT_TIMESTAMP WHERE id=1").run(JSON.stringify(update.shortsTimes));
+  }
+  if (update.selectedRegions && Array.isArray(update.selectedRegions) && update.selectedRegions.every((r) => typeof r === "string")) {
+    db.prepare("UPDATE auto_news_settings SET selected_regions=?, updated_at=CURRENT_TIMESTAMP WHERE id=1").run(JSON.stringify(update.selectedRegions));
+  }
+}
+
 // tts_provider column value for the `projects` INSERT: 'gemini' (paid) or 'local' (free →
 // parlerSpeechProvider picks it up for Tamil output, see services/pipeline.ts).
 function ttsProviderColumnValue(): "gemini" | "local" {

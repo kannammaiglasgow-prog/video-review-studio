@@ -1,46 +1,70 @@
-import { runAllRegionsAutoNews, isAutoNewsEnabled, runAutoShortsPipeline, isAutoShortsEnabled } from "./auto-news";
+import { isAutoNewsEnabled, runAutoShortsPipeline, isAutoShortsEnabled, runSelectedRegionsAutoNews, getAutoNewsSchedule } from "./auto-news";
+import { getAutoStorySettings, runAutoStoryPipeline, type StoryChannel } from "./auto-story";
 
-let lastNewsRun = "";
-let shortsHourIndex = 0;
-let lastShortsRun = "";
+let lastNewsRunKey = "";
+let shortsSlotIndex = 0;
+let lastShortsRunKey = "";
+const lastStoryRunKey: Record<StoryChannel, string> = { story: "", english: "" };
+let storyRunInProgress = false;
 
 function pad(n: number) { return n.toString().padStart(2, "0"); }
 
 function checkAndRun() {
   const now = new Date();
-  const hours = now.getHours();
-  const minutes = now.getMinutes();
+  const hhmm = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
   const dateKey = now.toDateString();
-  const hourKey = `${dateKey}-${pad(hours)}`;
+  const schedule = getAutoNewsSchedule();
 
-  // ── Long-form news: 8 AM & 3 PM ───────────────────────────────────────────
-  if ((hours === 8 || hours === 15) && minutes === 0 && lastNewsRun !== hourKey) {
-    lastNewsRun = hourKey;
+  // ── Long-form news: configurable times (default 08:00 & 15:00) ────────────
+  const newsRunKey = `${dateKey}-${hhmm}`;
+  if (schedule.longVideoTimes.includes(hhmm) && lastNewsRunKey !== newsRunKey) {
+    lastNewsRunKey = newsRunKey;
     if (!isAutoNewsEnabled()) {
-      console.log(`[Scheduler] News automation is OFF. Skipping ${hours}:00.`);
+      console.log(`[Scheduler] News automation is OFF. Skipping ${hhmm}.`);
     } else {
-      console.log(`[Scheduler] ⏰ News trigger at ${hours}:00 — Starting...`);
-      runAllRegionsAutoNews().catch(err => console.error("[Scheduler] News error:", err));
+      console.log(`[Scheduler] ⏰ News trigger at ${hhmm} — regions: ${schedule.selectedRegions.join(", ")}`);
+      runSelectedRegionsAutoNews(schedule.selectedRegions).catch(err => console.error("[Scheduler] News error:", err));
     }
   }
 
-  // ── Shorts: every hour (10 shorts per day across all 5 regions) ───────────
-  if (minutes === 0 && lastShortsRun !== hourKey) {
-    lastShortsRun = hourKey;
+  // ── Shorts: configurable times (default 10/day) ────────────────────────────
+  const shortsRunKey = `${dateKey}-${hhmm}`;
+  if (schedule.shortsTimes.includes(hhmm) && lastShortsRunKey !== shortsRunKey) {
+    lastShortsRunKey = shortsRunKey;
     if (!isAutoShortsEnabled()) {
-      console.log(`[Scheduler] Shorts automation is OFF. Skipping hour ${hours}.`);
+      console.log(`[Scheduler] Shorts automation is OFF. Skipping ${hhmm}.`);
     } else {
-      console.log(`[Scheduler] 📱 Shorts trigger at ${hours}:00 — Slot ${shortsHourIndex}`);
-      const currentSlot = shortsHourIndex;
-      shortsHourIndex = (shortsHourIndex + 1) % 10;
-      runAutoShortsPipeline(currentSlot).catch(err => console.error("[Scheduler] Shorts error:", err));
+      const slot = schedule.shortsTimes.indexOf(hhmm);
+      console.log(`[Scheduler] 📱 Shorts trigger at ${hhmm} — Slot ${slot}`);
+      runAutoShortsPipeline(slot >= 0 ? slot : shortsSlotIndex++).catch(err => console.error("[Scheduler] Shorts error:", err));
+    }
+  }
+
+  // ── Story-channel Idea Engine (Tamil Story + English Stories) ──────────────
+  // Runs are heavy (script + TTS + render, several minutes each) so they're
+  // serialized one-at-a-time rather than overlapped if both channels' times coincide.
+  for (const channel of ["story", "english"] as StoryChannel[]) {
+    const runKey = `${dateKey}-${hhmm}`;
+    const settings = getAutoStorySettings(channel);
+    if (settings.times.includes(hhmm) && lastStoryRunKey[channel] !== runKey) {
+      lastStoryRunKey[channel] = runKey;
+      if (!settings.enabled) {
+        console.log(`[Scheduler] Story automation (${channel}) is OFF. Skipping ${hhmm}.`);
+      } else if (storyRunInProgress) {
+        console.log(`[Scheduler] Story automation (${channel}) skipped at ${hhmm} — another story run is still in progress.`);
+      } else {
+        console.log(`[Scheduler] 📖 Story Idea Engine trigger (${channel}) at ${hhmm}`);
+        storyRunInProgress = true;
+        runAutoStoryPipeline(channel)
+          .catch(err => console.error(`[Scheduler] Story error (${channel}):`, err))
+          .finally(() => { storyRunInProgress = false; });
+      }
     }
   }
 }
 
-console.log("[Scheduler] 🟢 Auto News + Shorts Scheduler started!");
-console.log("[Scheduler] News Schedule : 8:00 AM & 3:00 PM (UK time) — 5 regions");
-console.log("[Scheduler] Shorts Schedule: Every hour — 10 Shorts/day — all regions combined");
+console.log("[Scheduler] 🟢 Auto News + Shorts + Story Idea Engine Scheduler started!");
+console.log("[Scheduler] Schedule is configurable via /auto-news (News/Shorts) and each channel's dashboard page (Story/English) — reads times fresh from DB every minute.");
 
 checkAndRun();
 setInterval(checkAndRun, 60000); // check every minute

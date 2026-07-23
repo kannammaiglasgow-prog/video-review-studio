@@ -315,6 +315,54 @@ function migrate(db: DatabaseSync) {
     db.exec("ALTER TABLE auto_news_settings ADD COLUMN tts_mode TEXT NOT NULL DEFAULT 'free'");
   }
   db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (23, 'auto_news_tts_mode')");
+
+  // Records which channel a story was created FOR, at creation time — previously only
+  // youtube_channel (set after a successful upload) existed, so in-progress projects
+  // had no channel attribution at all. Needed for the per-channel dashboard.
+  if (!hasCol("story_projects", "intended_channel")) {
+    db.exec("ALTER TABLE story_projects ADD COLUMN intended_channel TEXT");
+  }
+  db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (24, 'story_intended_channel')");
+
+  // Configurable schedule for the news automation — previously hardcoded (8/15 for
+  // long-form, every hour for shorts) directly in schedule-auto-news.ts.
+  if (!hasCol("auto_news_settings", "long_video_times")) {
+    db.exec(`ALTER TABLE auto_news_settings ADD COLUMN long_video_times TEXT NOT NULL DEFAULT '["08:00","15:00"]'`);
+  }
+  if (!hasCol("auto_news_settings", "shorts_times")) {
+    db.exec(`ALTER TABLE auto_news_settings ADD COLUMN shorts_times TEXT NOT NULL DEFAULT '["09:00","10:00","11:00","12:00","13:00","14:00","15:00","16:00","17:00","18:00"]'`);
+  }
+  if (!hasCol("auto_news_settings", "selected_regions")) {
+    db.exec(`ALTER TABLE auto_news_settings ADD COLUMN selected_regions TEXT NOT NULL DEFAULT '["Tamil Nadu","Sri Lanka","UK","Germany","France"]'`);
+  }
+  db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (25, 'auto_news_schedule_config')");
+
+  // Content-selection automation ("Idea Engine") for the Tamil Story + English
+  // Stories channels — Gemini self-generates a pool of one-line story premises
+  // (situations/emotions only, no external scraping — Reddit's API was tried
+  // first but their "Responsible Builder Policy" restricts exactly this
+  // AI-content-generation use case), then a different Gemini call writes a
+  // wholly original story from a fresh premise, feeding the existing
+  // story-to-video render pipeline.
+  db.exec(`
+    DROP TABLE IF EXISTS auto_story_used_ideas;
+    CREATE TABLE IF NOT EXISTS auto_story_settings (
+      channel TEXT PRIMARY KEY,
+      enabled INTEGER NOT NULL DEFAULT 0,
+      times TEXT NOT NULL DEFAULT '["11:00","17:00"]',
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    INSERT OR IGNORE INTO auto_story_settings (channel, enabled, times) VALUES ('story', 0, '["11:00","17:00"]');
+    INSERT OR IGNORE INTO auto_story_settings (channel, enabled, times) VALUES ('english', 0, '["12:00","18:00"]');
+    CREATE TABLE IF NOT EXISTS story_idea_pool (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      premise TEXT NOT NULL UNIQUE,
+      category TEXT,
+      used INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (26, 'auto_story_idea_engine')");
 }
 
 export function database() {
@@ -376,16 +424,17 @@ export type StoryProjectRow = {
   thumbnail_prompt: string | null;
   tts_mode: string;
   localize: number;
+  intended_channel: string | null;
   created_at: string;
   updated_at: string;
 };
 
-export type StoryOptions = { aspectRatio?: "16:9" | "9:16"; bgm?: boolean; animate?: boolean; language?: "ta" | "en"; mediaSource?: "flow" | "stock"; ttsMode?: "free" | "paid"; localize?: boolean };
+export type StoryOptions = { aspectRatio?: "16:9" | "9:16"; bgm?: boolean; animate?: boolean; language?: "ta" | "en"; mediaSource?: "flow" | "stock"; ttsMode?: "free" | "paid"; localize?: boolean; intendedChannel?: string };
 
 export function createStoryProject(storyInput: string, durationTarget: number, voice: string, options: StoryOptions = {}): number {
   const db = database();
   const result = db.prepare(
-    "INSERT INTO story_projects (story_input, duration_target, voice, status, aspect_ratio, bgm_enabled, animate_enabled, language, media_source, tts_mode, localize) VALUES (?, ?, ?, 'generating', ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO story_projects (story_input, duration_target, voice, status, aspect_ratio, bgm_enabled, animate_enabled, language, media_source, tts_mode, localize, intended_channel) VALUES (?, ?, ?, 'generating', ?, ?, ?, ?, ?, ?, ?, ?)"
   ).run(
     storyInput,
     durationTarget,
@@ -397,6 +446,7 @@ export function createStoryProject(storyInput: string, durationTarget: number, v
     options.mediaSource === "stock" ? "stock" : "flow",
     options.ttsMode === "free" ? "free" : "paid",
     options.localize ? 1 : 0,
+    options.intendedChannel || null,
   );
   return Number(result.lastInsertRowid);
 }
@@ -440,6 +490,71 @@ export function listStoryProjects(limit = 20): StoryProjectSummary[] {
   ).all(limit) as StoryProjectSummary[];
 }
 
+export type ChannelHistoryItem = {
+  id: number;
+  title: string;
+  status: string;
+  createdAt: string;
+  youtubeUrl: string | null;
+  language: string;
+};
+
+/** History for one channel's dashboard card — newest first. A project belongs to a
+ * channel via intended_channel (set at creation) or, for older rows created before
+ * that column existed, youtube_channel (set only after a successful upload). */
+export function listStoryProjectsForChannel(channel: string, limit = 30): ChannelHistoryItem[] {
+  const db = database();
+  const rows = db.prepare(
+    `SELECT id, seo_title, story_input, status, created_at, youtube_url, language
+     FROM story_projects
+     WHERE COALESCE(intended_channel, youtube_channel) = ?
+     ORDER BY id DESC LIMIT ?`
+  ).all(channel, limit) as { id: number; seo_title: string | null; story_input: string; status: string; created_at: string; youtube_url: string | null; language: string }[];
+  return rows.map((r) => ({
+    id: r.id,
+    title: r.seo_title || r.story_input.slice(0, 80),
+    status: r.status,
+    createdAt: r.created_at,
+    youtubeUrl: r.youtube_url,
+    language: r.language,
+  }));
+}
+
+export type ChannelDashboardSummary = {
+  todayCount: number;
+  inProgressCount: number;
+  lastProject: ChannelHistoryItem | null;
+};
+
+const IN_PROGRESS_FILTER = "status NOT IN ('rendered','uploaded','failed')";
+
+/** At-a-glance stats for one channel's card on the home dashboard grid. */
+export function getChannelDashboardSummary(channel: string): ChannelDashboardSummary {
+  const db = database();
+  const todayRow = db.prepare(
+    `SELECT COUNT(*) AS c FROM story_projects WHERE COALESCE(intended_channel, youtube_channel) = ? AND date(created_at) = date('now')`
+  ).get(channel) as { c: number };
+  const inProgressRow = db.prepare(
+    `SELECT COUNT(*) AS c FROM story_projects WHERE COALESCE(intended_channel, youtube_channel) = ? AND ${IN_PROGRESS_FILTER}`
+  ).get(channel) as { c: number };
+  const last = db.prepare(
+    `SELECT id, seo_title, story_input, status, created_at, youtube_url, language
+     FROM story_projects WHERE COALESCE(intended_channel, youtube_channel) = ? ORDER BY id DESC LIMIT 1`
+  ).get(channel) as { id: number; seo_title: string | null; story_input: string; status: string; created_at: string; youtube_url: string | null; language: string } | undefined;
+  return {
+    todayCount: todayRow.c,
+    inProgressCount: inProgressRow.c,
+    lastProject: last ? {
+      id: last.id,
+      title: last.seo_title || last.story_input.slice(0, 80),
+      status: last.status,
+      createdAt: last.created_at,
+      youtubeUrl: last.youtube_url,
+      language: last.language,
+    } : null,
+  };
+}
+
 export function updateStoryProject(id: number, fields: Partial<Omit<StoryProjectRow, "id" | "created_at" | "updated_at">>) {
   const db = database();
   const keys = Object.keys(fields);
@@ -447,4 +562,61 @@ export function updateStoryProject(id: number, fields: Partial<Omit<StoryProject
   const setClause = keys.map((key) => `${key} = ?`).join(", ");
   const values = keys.map((key) => (fields as Record<string, unknown>)[key]) as (string | number | null)[];
   db.prepare(`UPDATE story_projects SET ${setClause}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(...values, id);
+}
+
+// ── Story-channel Idea Engine (Tamil Story + English Stories automation) ────
+
+export type AutoStorySettings = { enabled: boolean; times: string[] };
+
+export function getAutoStorySettings(channel: string): AutoStorySettings {
+  const db = database();
+  const row = db.prepare("SELECT enabled, times FROM auto_story_settings WHERE channel = ?").get(channel) as { enabled: number; times: string } | undefined;
+  if (!row) return { enabled: false, times: [] };
+  let times: string[] = [];
+  try {
+    const parsed = JSON.parse(row.times);
+    if (Array.isArray(parsed) && parsed.every((t) => typeof t === "string")) times = parsed;
+  } catch { /* keep [] */ }
+  return { enabled: row.enabled === 1, times };
+}
+
+export function setAutoStorySettings(channel: string, update: Partial<AutoStorySettings>): void {
+  const db = database();
+  db.prepare("INSERT OR IGNORE INTO auto_story_settings (channel) VALUES (?)").run(channel);
+  if (typeof update.enabled === "boolean") {
+    db.prepare("UPDATE auto_story_settings SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE channel = ?").run(update.enabled ? 1 : 0, channel);
+  }
+  if (Array.isArray(update.times) && update.times.every((t) => /^([01]\d|2[0-3]):([0-5]\d)$/.test(t))) {
+    db.prepare("UPDATE auto_story_settings SET times = ?, updated_at = CURRENT_TIMESTAMP WHERE channel = ?").run(JSON.stringify(update.times), channel);
+  }
+}
+
+// ── Story idea pool (Gemini self-generated premises, no external scraping) ──
+
+export type StoryIdea = { id: number; premise: string; category: string | null };
+
+/** One random unused premise, or null if the pool needs refilling. Shared
+ * globally (not per-channel) so Tamil Story and English Stories never both
+ * dramatize the exact same premise in two languages. */
+export function getUnusedIdea(): StoryIdea | undefined {
+  const db = database();
+  return db.prepare("SELECT id, premise, category FROM story_idea_pool WHERE used = 0 ORDER BY RANDOM() LIMIT 1").get() as StoryIdea | undefined;
+}
+
+export function countUnusedIdeas(): number {
+  const db = database();
+  const row = db.prepare("SELECT COUNT(*) AS c FROM story_idea_pool WHERE used = 0").get() as { c: number };
+  return row.c;
+}
+
+/** Adds new premises to the pool, silently skipping any exact duplicate text. */
+export function addIdeasToPool(ideas: { premise: string; category?: string }[]): void {
+  const db = database();
+  const insert = db.prepare("INSERT OR IGNORE INTO story_idea_pool (premise, category) VALUES (?, ?)");
+  for (const idea of ideas) insert.run(idea.premise, idea.category || null);
+}
+
+export function markIdeaPoolUsed(id: number): void {
+  const db = database();
+  db.prepare("UPDATE story_idea_pool SET used = 1 WHERE id = ?").run(id);
 }

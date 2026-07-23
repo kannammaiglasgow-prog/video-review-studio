@@ -188,6 +188,9 @@ export default function StoryToVideoPage() {
     const params = new URLSearchParams(window.location.search);
     const existing = params.get("project");
     if (existing && !projectId) setProjectId(Number(existing));
+    // Deep-link from the dashboard's "Start new video" button on a channel card.
+    const channelParam = params.get("channel");
+    if (channelParam && !existing) setChannel(channelParam);
   }, [projectId]);
 
   useEffect(() => {
@@ -234,7 +237,7 @@ export default function StoryToVideoPage() {
       const res = await fetch("/api/sivan-arul/story-to-video", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ story, durationSeconds: durationMinutes * 60, voice, aspectRatio, bgm, animate, language, ttsMode, localize }),
+        body: JSON.stringify({ story, durationSeconds: durationMinutes * 60, voice, aspectRatio, bgm, animate, language, ttsMode, localize, channel }),
       });
       const data = await res.json();
       if (data.success) {
@@ -682,7 +685,7 @@ export default function StoryToVideoPage() {
               </div>
             )}
 
-            {scriptReady && project.scenes.length > 0 && (
+            {scriptReady && project.scenes.length > 0 && !allImagesUploaded && (
               <div style={box}>
                 <label style={label}>Scene Media</label>
                 <div style={{ marginBottom: 14, padding: 12, background: "#0f0f1e", borderRadius: 8, border: "1px solid #2d5a3a", fontSize: 12, color: "#a0a0c0" }}>

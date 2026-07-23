@@ -27,6 +27,12 @@ export default function AutoNewsPage() {
   const [loading, setLoading] = useState(true);
   const [triggering, setTriggering] = useState(false);
   const [triggeringShorts, setTriggeringShorts] = useState(false);
+  const [longVideoTimes, setLongVideoTimes] = useState<string[]>([]);
+  const [shortsTimes, setShortsTimes] = useState<string[]>([]);
+  const [autoRegions, setAutoRegions] = useState<Set<string>>(new Set());
+  const [newLongTime, setNewLongTime] = useState("08:00");
+  const [newShortsTime, setNewShortsTime] = useState("09:00");
+  const [savingSchedule, setSavingSchedule] = useState(false);
   const [message, setMessage] = useState("");
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isRunning, setIsRunning] = useState(false);
@@ -42,6 +48,11 @@ export default function AutoNewsPage() {
       setSelectedVoice(data.selectedVoice || "parler-jaya");
       setTtsMode(data.ttsMode === "paid" ? "paid" : "free");
       setRegions(data.regions || []);
+      if (data.schedule) {
+        setLongVideoTimes(data.schedule.longVideoTimes || []);
+        setShortsTimes(data.schedule.shortsTimes || []);
+        setAutoRegions(new Set(data.schedule.selectedRegions || []));
+      }
     } catch {
       setMessage("❌ Settings fetch failed");
     } finally {
@@ -69,6 +80,46 @@ export default function AutoNewsPage() {
       body: JSON.stringify({ ttsMode: mode })
     });
     setMessage(mode === "free" ? "🆓 TTS — Free (Parler-TTS) ஆக மாற்றப்பட்டது" : "💰 TTS — Paid (Gemini TTS) ஆக மாற்றப்பட்டது");
+  };
+
+  const toggleAutoRegion = (name: string) => {
+    setAutoRegions(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name); else next.add(name);
+      return next;
+    });
+  };
+
+  const addLongTime = () => {
+    if (longVideoTimes.includes(newLongTime)) return;
+    setLongVideoTimes([...longVideoTimes, newLongTime].sort());
+  };
+  const removeLongTime = (t: string) => setLongVideoTimes(longVideoTimes.filter(x => x !== t));
+
+  const addShortsTime = () => {
+    if (shortsTimes.includes(newShortsTime)) return;
+    setShortsTimes([...shortsTimes, newShortsTime].sort());
+  };
+  const removeShortsTime = (t: string) => setShortsTimes(shortsTimes.filter(x => x !== t));
+
+  const saveSchedule = async () => {
+    if (longVideoTimes.length === 0 || shortsTimes.length === 0 || autoRegions.size === 0) {
+      setMessage("⚠️ குறைந்தது ஒரு நேரமும் ஒரு நாடும் தேர்ந்தெடுக்கவும்");
+      return;
+    }
+    setSavingSchedule(true);
+    try {
+      await fetch("/api/auto-news", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ schedule: { longVideoTimes, shortsTimes, selectedRegions: Array.from(autoRegions) } })
+      });
+      setMessage("✅ Automation schedule சேமிக்கப்பட்டது");
+    } catch {
+      setMessage("❌ Schedule save தோல்வி");
+    } finally {
+      setSavingSchedule(false);
+    }
   };
 
   // Poll logs every 3 seconds (prevent browser caching with timestamp and no-store)
@@ -193,7 +244,7 @@ export default function AutoNewsPage() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div>
               <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 4, marginTop: 0 }}>📺 நீண்ட வீடியோ ஆட்டோமேஷன் (16:9)</h2>
-              <p style={{ fontSize: 13, color: "#a0a0c0", margin: 0 }}>காலை 8:00 AM & மாலை 3:00 PM — 5 நாடுகள்</p>
+              <p style={{ fontSize: 13, color: "#a0a0c0", margin: 0 }}>{longVideoTimes.join(", ") || "—"} — {autoRegions.size} நாடுகள் (கீழே Schedule-ல் மாற்றலாம்)</p>
             </div>
             <button onClick={toggleEnabled} style={toggleStyle(enabled)}>
               <div style={knobStyle(enabled)} />
@@ -209,8 +260,7 @@ export default function AutoNewsPage() {
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div>
               <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 4, marginTop: 0 }}>📱 Shorts ஆட்டோமேஷன் (9:16 · 30–60 வினாடி)</h2>
-              <p style={{ fontSize: 13, color: "#a0a0c0", margin: 0 }}>ஒவ்வொரு மணி நேரத்திற்கும் 1 Short — தினமும் 10 Shorts</p>
-              <p style={{ fontSize: 12, color: "#888", marginTop: 4, marginBottom: 0 }}>5 நாடுகளில் Top 2 செய்திகள் = 10 Shorts (TN → SL → UK → DE → FR → ...)</p>
+              <p style={{ fontSize: 13, color: "#a0a0c0", margin: 0 }}>தினமும் {shortsTimes.length} Shorts — {shortsTimes.join(", ") || "—"}</p>
             </div>
             <button onClick={toggleShortsEnabled} style={toggleStyle(shortsEnabled)}>
               <div style={knobStyle(shortsEnabled)} />
@@ -219,6 +269,61 @@ export default function AutoNewsPage() {
           <p style={{ fontSize: 12, color: shortsEnabled ? "#4ade80" : "#f87171", marginTop: 8, marginBottom: 0, fontWeight: 600 }}>
             {shortsEnabled ? "🟢 ON — ஒவ்வொரு மணிக்கும் 1 Short தானாக upload ஆகும்" : "🔴 OFF — Shorts automation நிறுத்தப்பட்டுள்ளது"}
           </p>
+        </div>
+
+        {/* ── SECTION 2.2: Automation Schedule (times + regions + count) ─── */}
+        <div style={{ background: "rgba(255,255,255,0.05)", borderRadius: 16, padding: "20px 24px", marginBottom: 16, border: "1px solid rgba(167,139,250,0.3)" }}>
+          <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 4, marginTop: 0 }}>⏰ Automation Schedule</h2>
+          <p style={{ fontSize: 13, color: "#a0a0c0", marginTop: 0, marginBottom: 16 }}>எத்தனை மணிக்கு, எத்தனை videos/shorts, எந்த நாடுகள் — இங்கே தேர்ந்தெடுக்கவும்</p>
+
+          <label style={{ display: "block", marginBottom: 6, color: "#a0a0c0", fontSize: 14 }}>📺 நீண்ட வீடியோ நேரங்கள் ({longVideoTimes.length})</label>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+            {longVideoTimes.map(t => (
+              <span key={t} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: 8, background: "rgba(167,139,250,0.15)", border: "1px solid rgba(167,139,250,0.3)", fontSize: 13 }}>
+                {t}
+                <button onClick={() => removeLongTime(t)} style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer", fontSize: 13, padding: 0 }}>×</button>
+              </span>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+            <input type="time" value={newLongTime} onChange={e => setNewLongTime(e.target.value)} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)", background: "#1a0a2e", color: "#fff", fontSize: 13 }} />
+            <button onClick={addLongTime} style={{ fontSize: 12, padding: "6px 14px", borderRadius: 8, border: "1px solid #a78bfa", background: "transparent", color: "#a78bfa", cursor: "pointer" }}>+ நேரம் சேர்</button>
+          </div>
+
+          <label style={{ display: "block", marginBottom: 6, color: "#a0a0c0", fontSize: 14 }}>📱 Shorts நேரங்கள் ({shortsTimes.length})</label>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+            {shortsTimes.map(t => (
+              <span key={t} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: 8, background: "rgba(244,114,182,0.15)", border: "1px solid rgba(244,114,182,0.3)", fontSize: 13 }}>
+                {t}
+                <button onClick={() => removeShortsTime(t)} style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer", fontSize: 13, padding: 0 }}>×</button>
+              </span>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 20 }}>
+            <input type="time" value={newShortsTime} onChange={e => setNewShortsTime(e.target.value)} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)", background: "#1a0a2e", color: "#fff", fontSize: 13 }} />
+            <button onClick={addShortsTime} style={{ fontSize: 12, padding: "6px 14px", borderRadius: 8, border: "1px solid #f472b6", background: "transparent", color: "#f472b6", cursor: "pointer" }}>+ நேரம் சேர்</button>
+          </div>
+
+          <label style={{ display: "block", marginBottom: 6, color: "#a0a0c0", fontSize: 14 }}>🌍 Automation இயங்கும் நாடுகள் ({autoRegions.size})</label>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 20 }}>
+            {regions.map(r => (
+              <label key={r.name} style={{
+                display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderRadius: 10, cursor: "pointer",
+                background: autoRegions.has(r.name) ? "rgba(167,139,250,0.15)" : "rgba(255,255,255,0.03)",
+                border: autoRegions.has(r.name) ? "1px solid #a78bfa" : "1px solid rgba(255,255,255,0.08)"
+              }}>
+                <input type="checkbox" checked={autoRegions.has(r.name)} onChange={() => toggleAutoRegion(r.name)} style={{ accentColor: "#a78bfa" }} />
+                <span style={{ fontSize: 13 }}>{r.tamilName}</span>
+              </label>
+            ))}
+          </div>
+
+          <button onClick={saveSchedule} disabled={savingSchedule} style={{
+            width: "100%", padding: "12px 0", borderRadius: 12, border: "none", cursor: savingSchedule ? "wait" : "pointer",
+            background: "linear-gradient(90deg, #a78bfa, #f472b6)", color: "#fff", fontSize: 14, fontWeight: 700, opacity: savingSchedule ? 0.7 : 1
+          }}>
+            {savingSchedule ? "சேமிக்கிறது..." : "💾 Schedule சேமி"}
+          </button>
         </div>
 
         {/* ── SECTION 2.4: TTS Free/Paid Toggle ─────────────────────────── */}
@@ -326,8 +431,8 @@ export default function AutoNewsPage() {
         {/* Info */}
         <div style={{ padding: "16px 20px", background: "rgba(255,255,255,0.03)", borderRadius: 12, fontSize: 12, color: "#555" }}>
           <p style={{ margin: "2px 0" }}>📌 நீண்ட வீடியோ: 16:9 | Shorts: 9:16 (30–60 sec) | மொழி: தமிழ்</p>
-          <p style={{ margin: "2px 0" }}>📌 Shorts Schedule: ஒவ்வொரு மணிக்கும் 1 — TN → SL → UK → DE → FR → ... rotation</p>
-          <p style={{ margin: "2px 0" }}>📌 செய்தி மூலம்: Google News RSS (5 நாடுகள்)</p>
+          <p style={{ margin: "2px 0" }}>📌 நேரங்கள்/நாடுகள் மேலே "⏰ Automation Schedule" section-ல் மாற்றலாம்</p>
+          <p style={{ margin: "2px 0" }}>📌 செய்தி மூலம்: Google News RSS</p>
         </div>
 
         {/* ── LIVE STATUS PANEL ─────────────────────────────────────── */}
