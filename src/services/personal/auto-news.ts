@@ -90,6 +90,29 @@ export function setAutoNewsVoice(voice: string): void {
   db.prepare("UPDATE auto_news_settings SET selected_voice=?, updated_at=CURRENT_TIMESTAMP WHERE id=1").run(voice);
 }
 
+export type AutoNewsTtsMode = "free" | "paid";
+
+export function getAutoNewsTtsMode(): AutoNewsTtsMode {
+  try {
+    const db = database();
+    const row = db.prepare("SELECT tts_mode FROM auto_news_settings WHERE id=1").get() as { tts_mode: string } | undefined;
+    return row?.tts_mode === "paid" ? "paid" : "free";
+  } catch {
+    return "free";
+  }
+}
+
+export function setAutoNewsTtsMode(mode: AutoNewsTtsMode): void {
+  const db = database();
+  db.prepare("UPDATE auto_news_settings SET tts_mode=?, updated_at=CURRENT_TIMESTAMP WHERE id=1").run(mode);
+}
+
+// tts_provider column value for the `projects` INSERT: 'gemini' (paid) or 'local' (free →
+// parlerSpeechProvider picks it up for Tamil output, see services/pipeline.ts).
+function ttsProviderColumnValue(): "gemini" | "local" {
+  return getAutoNewsTtsMode() === "paid" ? "gemini" : "local";
+}
+
 // ── Live Progress Logging ────────────────────────────────────────────────────
 export type LogStatus = "running" | "done" | "error" | "info";
 
@@ -172,6 +195,7 @@ async function processOneShort(title: string, region: Region, index: number, ses
   writeLog(sessionId, "attempt", `🔄 Short (${index + 1}/10) — "${title.slice(0, 50)}..."`, "running", region.tamilName);
 
   const voice = getAutoNewsVoice();
+  const ttsProvider = ttsProviderColumnValue();
   const db = database();
   const insert = db.prepare(`
     INSERT INTO projects (
@@ -179,10 +203,10 @@ async function processOneShort(title: string, region: Region, index: number, ses
       stance, tone, persona, voice, tts_provider,
       aspect_ratio, duration, transcript, output_language, status, custom_instruction, video_style,
       tier, cta_enabled, cta_position, b_roll_source, split_shorts_enabled, auto_approve
-    ) VALUES ('', 'text', 'rewrite', '00:00', '00:00', 'நடுநிலை', 'இயல்பான', 'யூடியூபர்', ?, 'gemini', '9:16', '60 விநாடிகள்', ?, 'ta', 'queued', ?, 'standard', 'premium', 0, 'end', 'stock', 0, 1)
+    ) VALUES ('', 'text', 'rewrite', '00:00', '00:00', 'நடுநிலை', 'இயல்பான', 'யூடியூபர்', ?, ?, '9:16', '60 விநாடிகள்', ?, 'ta', 'queued', ?, 'standard', 'premium', 0, 'end', 'stock', 0, 1)
   `);
 
-  const result = insert.run(voice, title, instruction);
+  const result = insert.run(voice, ttsProvider, title, instruction);
   const projectId = Number(result.lastInsertRowid);
   writeLog(sessionId, "project", `📝 Project #${projectId} உருவாக்கப்பட்டது`, "running", region.tamilName, projectId);
 
@@ -371,6 +395,7 @@ ${combinedNewsText}
 5. கால அளவு: ஒவ்வொரு செய்தியும் விரிவாக விவரிக்கப்பட்டு, மொத்த வீடியோ குறைந்தது 5 முதல் 7 நிமிடங்கள் வரை ஓட வேண்டும்.`;
 
     const voice = getAutoNewsVoice();
+    const ttsProvider = ttsProviderColumnValue();
     const db = database();
     const insert = db.prepare(`
       INSERT INTO projects (
@@ -378,10 +403,10 @@ ${combinedNewsText}
         stance, tone, persona, voice, tts_provider,
         aspect_ratio, duration, transcript, output_language, status, custom_instruction, video_style,
         tier, cta_enabled, cta_position, b_roll_source, split_shorts_enabled, auto_approve
-      ) VALUES ('', 'text', 'rewrite', '00:00', '00:00', 'நடுநிலை', 'இயல்பான', 'யூடியூபர்', ?, 'gemini', '16:9', 'ஆட்டோ — voice முடியும் வரை', ?, 'ta', 'queued', ?, 'standard', 'premium', 0, 'end', 'stock', 0, 1)
+      ) VALUES ('', 'text', 'rewrite', '00:00', '00:00', 'நடுநிலை', 'இயல்பான', 'யூடியூபர்', ?, ?, '16:9', 'ஆட்டோ — voice முடியும் வரை', ?, 'ta', 'queued', ?, 'standard', 'premium', 0, 'end', 'stock', 0, 1)
     `);
 
-    const result = insert.run(voice, combinedNewsText, newsInstruction);
+    const result = insert.run(voice, ttsProvider, combinedNewsText, newsInstruction);
     const projectId = Number(result.lastInsertRowid);
     writeLog(sid, "project", `📝 Project #${projectId} உருவாக்கப்பட்டது`, "running", region.tamilName, projectId);
 

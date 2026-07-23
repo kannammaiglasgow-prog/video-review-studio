@@ -4,6 +4,37 @@ This document provides a comprehensive handover status for the next AI agent in 
 
 ---
 
+## 🤖 Claude Session Update — 2026-07-22 (Story-to-Video feature, built end-to-end)
+
+A long single Claude session built an entirely new feature, **Story-to-Video** (`/sivan-arul/story-to-video`), from scratch and iterated on it heavily based on live feedback. Read this before touching anything under `story-to-video/`, `services/story/`, `services/providers/{gemini,edge-tts,facebook}.ts`, or the YouTube multi-channel code.
+
+### What Story-to-Video does
+Paste a story/news (Tamil or English) → Gemini writes a duration-targeted narration script → scene breakdown (narration excerpts + English image-prompts + stock-search keywords) → TTS narration → copyright-free stock video/images auto-fetched per scene (Pexels/Pixabay) → FFmpeg render → optional YouTube + Facebook upload. Core files: `src/app/api/sivan-arul/story-to-video/**`, `src/app/sivan-arul/story-to-video/page.tsx`, `src/services/story/generator.ts`, `src/lib/database.ts` (`story_projects` table, migrations 15–22).
+
+### Key decisions & why
+- **Google Flow (labs.google/flow) browser automation was built, then fully ripped out** at the user's request. It worked (Playwright + persistent Chrome profile, validated live selectors), but the user decided against maintaining browser automation. **Do not reintroduce it** without being asked — `services/flow/` and the `flow-generate` route are gone; scene media is stock-only now (`downloadScenedStockMedia` in `services/providers/stock-media.ts`, pre-existing from the main review pipeline, reused here).
+- **`gemini-2.5-flash` is a thinking model** — omitting `thinkingConfig:{thinkingBudget:0}` + `maxOutputTokens` causes INTERMITTENT empty responses (thinking tokens swing 1.8k–11k, can eat the whole budget). Fixed in both `generator.ts` and `providers/gemini.ts`. If you see "Gemini பதில் காலியாக உள்ளது" anywhere else in the codebase, apply the same fix.
+- **TTS resilience**: Gemini TTS chunks intermittently return no audio; `synthesize()` now retries 3× then inserts silence instead of failing the whole narration.
+- **Free vs Paid TTS**: `tts_mode` column — paid = Gemini TTS, free = new `providers/edge-tts.ts` (spawns `python -m edge_tts`, needs the `edge-tts` pip package installed — confirmed present on this machine — then ffmpeg-converts mp3→wav).
+- **Localize toggle**: OFF means literally NO changes (verbatim if input already matches the target language, else a strict literal translation only — no creative rewriting). ON means full cultural localization (names/places SUBSTITUTED with native equivalents, not transliterated — the prompt needed an explicit before/after example to stop Gemini from just transliterating).
+- **Image-paste-to-story**: paste an image into the story textarea (Ctrl+V) → Gemini vision writes a story-starter, auto-inserted. New `describeImageForStory()` in `providers/gemini.ts`, stateless `POST .../describe-image` route (no project needed yet).
+- **Auto-render + Auto-upload**: rendering now starts automatically once every scene has media (no button click); an "Auto Upload" checkbox (shown right on the input form, next to a live YouTube-channel picker) generates SEO and uploads to YouTube automatically once render finishes — no confirmation. **This is dangerous to test carelessly** — see the incident note below.
+- **Concurrent projects are safe**: each `story_projects` row + its own `media/story/<id>/` folder, no shared state; `database()` is a WAL-mode `DatabaseSync` singleton with `busy_timeout`. A "Recent Projects" list (`GET .../story-to-video/list`) lets the user reopen any in-flight/finished project without knowing its id.
+- **YouTube multi-channel**: added `"english"` and `"food"` channel types (same per-channel-token-file pattern as existing `devotional`/`sanatana`/`story`/`news`). **Gotcha**: one Google account can own several channels — OAuth silently auto-approves to whichever channel was picked before, so switching channels requires Disconnect (which now also revokes at Google) → Connect → picking the right one at Google's brand-account chooser. `youtubeAuthUrl` prompt is `select_account consent` to force that chooser.
+- **Facebook Page upload** (new, alongside YouTube): `services/providers/facebook.ts` + `/api/sivan-arul/facebook/{auth,callback,manage}` + `.../story-to-video/[id]/upload-facebook`. **Needs `FACEBOOK_APP_ID`/`FACEBOOK_APP_SECRET` in `.env.local`, not yet set** — the user must create a Meta Developer App (Business type), add the Facebook Login product, set the OAuth redirect to `<origin>/api/sivan-arul/facebook/callback`, and add themselves as an app Admin/Tester (avoids needing Meta's public App Review, since only the app's own admins/testers are using it). Kept manual-only (not wired into Auto Upload).
+
+### ⚠️ Real-world incident — read before testing anything that publishes
+While verifying auto-upload live, a real ~6s test video got published PUBLIC to the user's actual "Tamil Story" YouTube channel (an unavoidable side effect of testing a feature whose entire point is to publish automatically). Tried to fix it via a new `updateYoutubeVideoPrivacy()` (kept in `youtube.ts`, reusable) but the connected token's OAuth scope (`youtube.upload` only) is insufficient for `videos.update` — needs a broader-scope reauth to fix programmatically; the user was asked to fix it manually in YouTube Studio instead. **Lesson: never end-to-end test a feature whose job is "publish for real" without either a private/unlisted test path or asking first** — see `feedback_verify_real_world_side_effects` in this user's Claude memory for the fuller writeup.
+
+### Loose ends for the next agent
+- Facebook upload is untested end-to-end (blocked on the user creating the Meta App — see above).
+- The privacy-scope issue on the "story" YouTube channel token is unresolved (either the user fixes the one video manually, or that channel gets reauthorized with a broader scope later).
+- `updateYoutubeVideoPrivacy()` exists but has no UI wired to it yet.
+- Story-to-Video's own "Task #1"-equivalent (multi-channel ambiguity) is now solved for itself via the input-form channel picker + Connect/Disconnect, but this doesn't touch the *original* Create-page bug described in Task #1 below — that's still open, unrelated codepath.
+- All of the above is pushed to GitHub as of commit `7141979` (see `git log` for the fuller list of commits this session made: `e078049`, `03368f5`, `7141979`).
+
+---
+
 ## 🤖 Claude Session Update — 2026-07-18 (for the next agent, e.g. Antigravity)
 
 Everything below happened in one Claude Code session after the last Codex handoff. Read this before touching the repo.

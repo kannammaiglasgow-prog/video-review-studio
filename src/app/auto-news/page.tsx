@@ -21,6 +21,7 @@ export default function AutoNewsPage() {
   const [enabled, setEnabled] = useState(false);
   const [shortsEnabled, setShortsEnabled] = useState(false);
   const [selectedVoice, setSelectedVoice] = useState("parler-jaya");
+  const [ttsMode, setTtsMode] = useState<"free" | "paid">("free");
   const [regions, setRegions] = useState<RegionInfo[]>([]);
   const [selectedRegions, setSelectedRegions] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -39,6 +40,7 @@ export default function AutoNewsPage() {
       setEnabled(data.enabled);
       setShortsEnabled(data.shortsEnabled);
       setSelectedVoice(data.selectedVoice || "parler-jaya");
+      setTtsMode(data.ttsMode === "paid" ? "paid" : "free");
       setRegions(data.regions || []);
     } catch {
       setMessage("❌ Settings fetch failed");
@@ -57,6 +59,16 @@ export default function AutoNewsPage() {
       body: JSON.stringify({ selectedVoice: voice })
     });
     setMessage(`🗣️ குரல் "${voiceOptions.find(o => o.value === voice)?.label}" ஆக மாற்றப்பட்டது`);
+  };
+
+  const changeTtsMode = async (mode: "free" | "paid") => {
+    setTtsMode(mode);
+    await fetch("/api/auto-news", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ttsMode: mode })
+    });
+    setMessage(mode === "free" ? "🆓 TTS — Free (Parler-TTS) ஆக மாற்றப்பட்டது" : "💰 TTS — Paid (Gemini TTS) ஆக மாற்றப்பட்டது");
   };
 
   // Poll logs every 3 seconds (prevent browser caching with timestamp and no-store)
@@ -209,16 +221,40 @@ export default function AutoNewsPage() {
           </p>
         </div>
 
+        {/* ── SECTION 2.4: TTS Free/Paid Toggle ─────────────────────────── */}
+        <div style={{ background: "rgba(255,255,255,0.05)", borderRadius: 16, padding: "20px 24px", marginBottom: 16, border: "1px solid rgba(251,191,36,0.2)" }}>
+          <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 4, marginTop: 0 }}>💸 குரல் தயாரிப்பு (TTS) — Free அல்லது Paid</h2>
+          <p style={{ fontSize: 13, color: "#a0a0c0", marginBottom: 16 }}>தானியங்கி மற்றும் உடனடி செய்தி/Shorts வீடியோக்கள் அனைத்திற்கும் பொருந்தும்</p>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button onClick={() => changeTtsMode("free")} style={{
+              flex: 1, padding: "12px 0", borderRadius: 12, cursor: "pointer", fontSize: 14, fontWeight: 700,
+              border: ttsMode === "free" ? "1px solid #22c55e" : "1px solid rgba(255,255,255,0.15)",
+              background: ttsMode === "free" ? "rgba(34,197,94,0.15)" : "transparent",
+              color: ttsMode === "free" ? "#4ade80" : "#a0a0c0"
+            }}>🆓 Free<br /><span style={{ fontSize: 11, fontWeight: 400 }}>Parler-TTS (குரல் தேர்வு கீழே)</span></button>
+            <button onClick={() => changeTtsMode("paid")} style={{
+              flex: 1, padding: "12px 0", borderRadius: 12, cursor: "pointer", fontSize: 14, fontWeight: 700,
+              border: ttsMode === "paid" ? "1px solid #fbbf24" : "1px solid rgba(255,255,255,0.15)",
+              background: ttsMode === "paid" ? "rgba(251,191,36,0.15)" : "transparent",
+              color: ttsMode === "paid" ? "#fbbf24" : "#a0a0c0"
+            }}>💰 Paid<br /><span style={{ fontSize: 11, fontWeight: 400 }}>Gemini TTS (API cost ஆகும்)</span></button>
+          </div>
+        </div>
+
         {/* ── SECTION 2.5: Voice Selector ────────────────────────────────── */}
-        <div style={{ background: "rgba(255,255,255,0.05)", borderRadius: 16, padding: "20px 24px", marginBottom: 24, border: "1px solid rgba(251,191,36,0.2)" }}>
+        <div style={{ background: "rgba(255,255,255,0.05)", borderRadius: 16, padding: "20px 24px", marginBottom: 24, border: "1px solid rgba(251,191,36,0.2)", opacity: ttsMode === "paid" ? 0.5 : 1 }}>
           <h2 style={{ fontSize: 16, fontWeight: 600, marginBottom: 4, marginTop: 0 }}>🗣️ தமிழ் குரல் தேர்வு (Parler-TTS Voice)</h2>
-          <p style={{ fontSize: 13, color: "#a0a0c0", marginBottom: 16 }}>தானியங்கி மற்றும் உடனடி செய்திகளுக்குப் பயன்படுத்தப்பட வேண்டிய குரல்</p>
+          <p style={{ fontSize: 13, color: "#a0a0c0", marginBottom: 16 }}>
+            {ttsMode === "paid" ? "Paid TTS தேர்ந்தெடுக்கப்பட்டுள்ளதால் இந்தக் குரல் தேர்வு பயன்படுத்தப்படாது (Gemini தானாக ஒரு குரலைப் பயன்படுத்தும்)" : "தானியங்கி மற்றும் உடனடி செய்திகளுக்குப் பயன்படுத்தப்பட வேண்டிய குரல்"}
+          </p>
           <select
             value={selectedVoice}
             onChange={(e) => changeVoice(e.target.value)}
+            disabled={ttsMode === "paid"}
             style={{
               width: "100%", padding: "12px 16px", borderRadius: 12, border: "1px solid rgba(255,255,255,0.15)",
-              background: "#1a0a2e", color: "#fff", fontSize: 14, fontWeight: 500, outline: "none", cursor: "pointer"
+              background: "#1a0a2e", color: "#fff", fontSize: 14, fontWeight: 500, outline: "none",
+              cursor: ttsMode === "paid" ? "not-allowed" : "pointer"
             }}
           >
             {voiceOptions.map(o => (

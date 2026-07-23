@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { REGIONS, isAutoNewsEnabled, setAutoNewsEnabled, runSelectedRegionsAutoNews, isAutoShortsEnabled, setAutoShortsEnabled, runAutoShortsPipeline, getAutoNewsVoice, setAutoNewsVoice, runAllShortsPipelineManual } from "@/services/personal/auto-news";
+import { REGIONS, isAutoNewsEnabled, setAutoNewsEnabled, runSelectedRegionsAutoNews, isAutoShortsEnabled, setAutoShortsEnabled, runAutoShortsPipeline, getAutoNewsVoice, setAutoNewsVoice, runAllShortsPipelineManual, getAutoNewsTtsMode, setAutoNewsTtsMode } from "@/services/personal/auto-news";
 
 export const runtime = "nodejs";
 export const maxDuration = 600;
@@ -10,6 +10,7 @@ export async function GET() {
     enabled: isAutoNewsEnabled(),
     shortsEnabled: isAutoShortsEnabled(),
     selectedVoice: getAutoNewsVoice(),
+    ttsMode: getAutoNewsTtsMode(),
     regions: REGIONS.map(r => ({ name: r.name, tamilName: r.tamilName }))
   });
 }
@@ -35,6 +36,12 @@ export async function POST(request: Request) {
     if (typeof body.selectedVoice === "string") {
       setAutoNewsVoice(body.selectedVoice);
       return NextResponse.json({ success: true, selectedVoice: body.selectedVoice });
+    }
+
+    // Change TTS mode (free = Parler-TTS, paid = Gemini TTS)
+    if (body.ttsMode === "free" || body.ttsMode === "paid") {
+      setAutoNewsTtsMode(body.ttsMode);
+      return NextResponse.json({ success: true, ttsMode: body.ttsMode });
     }
 
     // Manual trigger for selected news regions

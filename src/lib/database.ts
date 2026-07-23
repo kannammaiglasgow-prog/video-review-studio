@@ -288,6 +288,33 @@ function migrate(db: DatabaseSync) {
     db.exec("ALTER TABLE story_projects ADD COLUMN facebook_url TEXT");
   }
   db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (22, 'story_facebook')");
+
+  // auto_news_settings/auto_news_logs previously existed only as ad-hoc tables outside
+  // migrations tracking; bring them under it here and add the free/paid TTS toggle.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS auto_news_settings (
+      id INTEGER PRIMARY KEY DEFAULT 1,
+      enabled INTEGER DEFAULT 0,
+      shorts_enabled INTEGER DEFAULT 0,
+      selected_voice TEXT DEFAULT 'parler-jaya',
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    INSERT OR IGNORE INTO auto_news_settings (id, enabled, shorts_enabled, selected_voice) VALUES (1, 0, 0, 'parler-jaya');
+    CREATE TABLE IF NOT EXISTS auto_news_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT NOT NULL,
+      project_id INTEGER,
+      region TEXT,
+      step TEXT NOT NULL,
+      message TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'running',
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  if (!hasCol("auto_news_settings", "tts_mode")) {
+    db.exec("ALTER TABLE auto_news_settings ADD COLUMN tts_mode TEXT NOT NULL DEFAULT 'free'");
+  }
+  db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (23, 'auto_news_tts_mode')");
 }
 
 export function database() {
