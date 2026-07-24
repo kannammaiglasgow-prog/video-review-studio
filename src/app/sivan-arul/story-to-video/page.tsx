@@ -69,6 +69,16 @@ const statusLabels: Record<string, string> = {
   failed: "❌ தோல்வி",
 };
 
+// "fetching_media" wording depends on which scene-media source the project
+// actually picked — otherwise an AI-image project misleadingly shows the
+// stock-footage message the whole time it's generating.
+function statusLabelFor(status: string, mediaSource?: string): string {
+  if (status === "fetching_media" && mediaSource === "ai") {
+    return "🎨 AI images (Pollinations/Flux) ஒவ்வொரு scene-க்கும் generate ஆகிறது...";
+  }
+  return statusLabels[status] || status;
+}
+
 const box: React.CSSProperties = { background: "#1a1a2e", borderRadius: 12, padding: 20, marginBottom: 20, border: "1px solid #2d2d44" };
 const label: React.CSSProperties = { display: "block", marginBottom: 6, color: "#a0a0c0", fontSize: 14 };
 const input: React.CSSProperties = { width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid #3a3a5a", background: "#0f0f1e", color: "#fff", fontSize: 14, boxSizing: "border-box" };
@@ -653,7 +663,7 @@ export default function StoryToVideoPage() {
             <div style={box}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <strong>Project #{project.id}</strong>
-                <span>{statusLabels[project.status] || project.status}</span>
+                <span>{statusLabelFor(project.status, project.mediaSource)}</span>
               </div>
               {project.errorMessage && <div style={{ color: "#ff8080", marginTop: 8, fontSize: 13 }}>{project.errorMessage}</div>}
             </div>
