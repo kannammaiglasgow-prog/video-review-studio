@@ -40,12 +40,71 @@ function relativeTime(iso: string): string {
 
 const box: React.CSSProperties = { background: "#1a1a2e", borderRadius: 12, padding: 20, marginBottom: 20, border: "1px solid #2d2d44" };
 
+const storyVoiceOptions = [
+  { value: "Female — Warm", label: "பெண் — Warm" },
+  { value: "Male — Warm", label: "ஆண் — Warm" },
+  { value: "Female — Energetic", label: "பெண் — Energetic" },
+  { value: "Male — Energetic", label: "ஆண் — Energetic" },
+  { value: "Male — Heroic/Firm", label: "ஆண் — Heroic/Firm" },
+  { value: "Female — Bright", label: "பெண் — Bright" },
+  { value: "Dramatic", label: "Dramatic" },
+];
+
+function TimesEditor({
+  label, times, setTimes, accentColor, newTime, setNewTime,
+}: {
+  label: string; times: string[]; setTimes: (t: string[]) => void; accentColor: string; newTime: string; setNewTime: (t: string) => void;
+}) {
+  const addTime = () => {
+    if (times.includes(newTime)) return;
+    setTimes([...times, newTime].sort());
+  };
+  const removeTime = (t: string) => setTimes(times.filter((x) => x !== t));
+
+  return (
+    <div style={{ marginBottom: 14 }}>
+      <label style={{ display: "block", marginBottom: 6, color: "#a0a0c0", fontSize: 13 }}>{label} ({times.length}/day)</label>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
+        {times.map((t) => (
+          <span key={t} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: 8, background: `${accentColor}26`, border: `1px solid ${accentColor}4d`, fontSize: 13 }}>
+            {t}
+            <button onClick={() => removeTime(t)} style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer", fontSize: 13, padding: 0 }}>×</button>
+          </span>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input type="time" value={newTime} onChange={(e) => setNewTime(e.target.value)} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)", background: "#0f0f1e", color: "#fff", fontSize: 13 }} />
+        <button onClick={addTime} style={{ fontSize: 12, padding: "6px 14px", borderRadius: 8, border: `1px solid ${accentColor}`, background: "transparent", color: accentColor, cursor: "pointer" }}>+ நேரம் சேர்</button>
+      </div>
+    </div>
+  );
+}
+
+function ToggleSwitch({ on, onClick }: { on: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        width: 52, height: 28, borderRadius: 14, border: "none", cursor: "pointer", position: "relative",
+        background: on ? "linear-gradient(90deg, #22c55e, #16a34a)" : "#333", transition: "background 0.3s", flexShrink: 0,
+      }}
+    >
+      <div style={{ width: 22, height: 22, borderRadius: 11, background: "#fff", position: "absolute", top: 3, left: on ? 27 : 3, transition: "left 0.3s" }} />
+    </button>
+  );
+}
+
 function IdeaEngineAutomation({ channel }: { channel: "story" | "english" }) {
   const [enabled, setEnabled] = useState(false);
   const [times, setTimes] = useState<string[]>([]);
   const [newTime, setNewTime] = useState("11:00");
+  const [shortsEnabled, setShortsEnabled] = useState(false);
+  const [shortsTimes, setShortsTimes] = useState<string[]>([]);
+  const [newShortsTime, setNewShortsTime] = useState("09:00");
+  const [voice, setVoice] = useState("Female — Warm");
   const [saving, setSaving] = useState(false);
   const [triggering, setTriggering] = useState(false);
+  const [triggeringShorts, setTriggeringShorts] = useState(false);
   const [message, setMessage] = useState("");
 
   const fetchSettings = useCallback(async () => {
@@ -54,6 +113,9 @@ function IdeaEngineAutomation({ channel }: { channel: "story" | "english" }) {
       const data = await res.json();
       setEnabled(Boolean(data.enabled));
       setTimes(data.times || []);
+      setShortsEnabled(Boolean(data.shortsEnabled));
+      setShortsTimes(data.shortsTimes || []);
+      setVoice(data.voice || "Female — Warm");
     } catch { /* ignore */ }
   }, [channel]);
 
@@ -63,82 +125,104 @@ function IdeaEngineAutomation({ channel }: { channel: "story" | "english" }) {
     const next = !enabled;
     setEnabled(next);
     await fetch(`/api/auto-story/${channel}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: next }) });
-    setMessage(next ? "🟢 Idea Engine ON ஆக்கப்பட்டது" : "🔴 Idea Engine OFF ஆக்கப்பட்டது");
+    setMessage(next ? "🟢 நீண்ட வீடியோ Idea Engine ON ஆக்கப்பட்டது" : "🔴 நீண்ட வீடியோ Idea Engine OFF ஆக்கப்பட்டது");
   };
 
-  const addTime = () => {
-    if (times.includes(newTime)) return;
-    setTimes([...times, newTime].sort());
+  const toggleShortsEnabled = async () => {
+    const next = !shortsEnabled;
+    setShortsEnabled(next);
+    await fetch(`/api/auto-story/${channel}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ shortsEnabled: next }) });
+    setMessage(next ? "🟢 Shorts Idea Engine ON ஆக்கப்பட்டது" : "🔴 Shorts Idea Engine OFF ஆக்கப்பட்டது");
   };
-  const removeTime = (t: string) => setTimes(times.filter((x) => x !== t));
 
-  const saveTimes = async () => {
+  const changeVoice = async (next: string) => {
+    setVoice(next);
+    await fetch(`/api/auto-story/${channel}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ voice: next }) });
+    setMessage(`🗣️ குரல் "${storyVoiceOptions.find((o) => o.value === next)?.label}" ஆக மாற்றப்பட்டது`);
+  };
+
+  const saveAll = async () => {
     setSaving(true);
     try {
-      await fetch(`/api/auto-story/${channel}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ times }) });
+      await fetch(`/api/auto-story/${channel}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ times, shortsTimes }) });
       setMessage("✅ நேரங்கள் சேமிக்கப்பட்டது");
     } finally { setSaving(false); }
   };
 
-  const triggerNow = async () => {
-    setTriggering(true);
+  const triggerNow = async (format: "long" | "short") => {
+    const setBusy = format === "long" ? setTriggering : setTriggeringShorts;
+    setBusy(true);
     setMessage("");
     try {
-      const res = await fetch(`/api/auto-story/${channel}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trigger: true }) });
+      const res = await fetch(`/api/auto-story/${channel}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trigger: true, format }) });
       const data = await res.json();
       setMessage(data.success ? "🚀 Idea Engine தொடங்கியது — கீழே 'இப்போது நடக்கிறது'-ல் சில நிமிடங்களில் தெரியும்" : `❌ ${data.error}`);
     } catch {
       setMessage("❌ Trigger தோல்வி");
     } finally {
-      setTriggering(false);
+      setBusy(false);
     }
   };
 
   return (
     <div style={{ ...box, border: "1px solid rgba(34,197,94,0.3)" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-        <h2 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>🤖 Idea Engine Automation</h2>
-        <button
-          onClick={toggleEnabled}
-          style={{
-            width: 52, height: 28, borderRadius: 14, border: "none", cursor: "pointer", position: "relative",
-            background: enabled ? "linear-gradient(90deg, #22c55e, #16a34a)" : "#333", transition: "background 0.3s",
-          }}
-        >
-          <div style={{ width: 22, height: 22, borderRadius: 11, background: "#fff", position: "absolute", top: 3, left: enabled ? 27 : 3, transition: "left 0.3s" }} />
-        </button>
-      </div>
-      <p style={{ fontSize: 12, color: "#a0a0c0", marginTop: 0, marginBottom: 14 }}>
+      <h2 style={{ fontSize: 15, fontWeight: 700, margin: "0 0 8px 0" }}>🤖 Idea Engine Automation</h2>
+      <p style={{ fontSize: 12, color: "#a0a0c0", marginTop: 0, marginBottom: 16 }}>
 Gemini-யே ஒரு idea (situation) invent பண்ணி, அதிலிருந்து முற்றிலும் புதிய கதை எழுதி, render பண்ணி — Private-ஆ review-க்கு தயார் ஆகும் (upload தானாக ஆகாது). வெளியில் இருந்து எதுவும் scrape செய்யப்படாது.
       </p>
 
-      <label style={{ display: "block", marginBottom: 6, color: "#a0a0c0", fontSize: 13 }}>நேரங்கள் ({times.length} videos/day)</label>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 10 }}>
-        {times.map((t) => (
-          <span key={t} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 10px", borderRadius: 8, background: "rgba(34,197,94,0.15)", border: "1px solid rgba(34,197,94,0.3)", fontSize: 13 }}>
-            {t}
-            <button onClick={() => removeTime(t)} style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer", fontSize: 13, padding: 0 }}>×</button>
-          </span>
-        ))}
+      {/* Long-form */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+        <span style={{ fontSize: 13, fontWeight: 600 }}>📺 நீண்ட வீடியோ (16:9)</span>
+        <ToggleSwitch on={enabled} onClick={toggleEnabled} />
       </div>
-      <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-        <input type="time" value={newTime} onChange={(e) => setNewTime(e.target.value)} style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)", background: "#0f0f1e", color: "#fff", fontSize: 13 }} />
-        <button onClick={addTime} style={{ fontSize: 12, padding: "6px 14px", borderRadius: 8, border: "1px solid #4ade80", background: "transparent", color: "#4ade80", cursor: "pointer" }}>+ நேரம் சேர்</button>
-        <button onClick={saveTimes} disabled={saving} style={{ fontSize: 12, padding: "6px 14px", borderRadius: 8, border: "none", background: "#22c55e", color: "#0a0a1a", fontWeight: 700, cursor: saving ? "wait" : "pointer" }}>
-          {saving ? "..." : "💾 சேமி"}
-        </button>
-      </div>
+      <TimesEditor label="நேரங்கள்" times={times} setTimes={setTimes} accentColor="#22c55e" newTime={newTime} setNewTime={setNewTime} />
 
-      <button
-        onClick={triggerNow}
-        disabled={triggering}
+      {/* Shorts */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, borderTop: "1px solid rgba(255,255,255,0.08)", paddingTop: 14 }}>
+        <span style={{ fontSize: 13, fontWeight: 600 }}>📱 Shorts (9:16)</span>
+        <ToggleSwitch on={shortsEnabled} onClick={toggleShortsEnabled} />
+      </div>
+      <TimesEditor label="நேரங்கள்" times={shortsTimes} setTimes={setShortsTimes} accentColor="#f472b6" newTime={newShortsTime} setNewTime={setNewShortsTime} />
+
+      <button onClick={saveAll} disabled={saving} style={{ width: "100%", fontSize: 12, padding: "8px 14px", borderRadius: 8, border: "none", background: "#22c55e", color: "#0a0a1a", fontWeight: 700, cursor: saving ? "wait" : "pointer", marginBottom: 14 }}>
+        {saving ? "..." : "💾 நேரங்கள் சேமி"}
+      </button>
+
+      <label style={{ display: "block", marginBottom: 6, color: "#a0a0c0", fontSize: 13 }}>குரல் (Voice — இரண்டு formats-க்கும்)</label>
+      <select
+        value={voice}
+        onChange={(e) => changeVoice(e.target.value)}
         style={{
-          width: "100%", padding: "12px 0", borderRadius: 10, border: "none", cursor: triggering ? "wait" : "pointer",
-          background: "linear-gradient(90deg, #a78bfa, #f472b6)", color: "#fff", fontSize: 14, fontWeight: 700, opacity: triggering ? 0.7 : 1,
+          width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)",
+          background: "#0f0f1e", color: "#fff", fontSize: 13, marginBottom: 14,
         }}
       >
-        {triggering ? "⏳ தொடங்குகிறது..." : "🚀 இப்போதே ஒரு Idea Video Generate பண்ணு"}
-      </button>
+        {storyVoiceOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+
+      <div style={{ display: "flex", gap: 10 }}>
+        <button
+          onClick={() => triggerNow("long")}
+          disabled={triggering}
+          style={{
+            flex: 1, padding: "12px 0", borderRadius: 10, border: "none", cursor: triggering ? "wait" : "pointer",
+            background: "linear-gradient(90deg, #a78bfa, #f472b6)", color: "#fff", fontSize: 13, fontWeight: 700, opacity: triggering ? 0.7 : 1,
+          }}
+        >
+          {triggering ? "⏳..." : "🚀 இப்போதே Long Video"}
+        </button>
+        <button
+          onClick={() => triggerNow("short")}
+          disabled={triggeringShorts}
+          style={{
+            flex: 1, padding: "12px 0", borderRadius: 10, border: "none", cursor: triggeringShorts ? "wait" : "pointer",
+            background: "linear-gradient(90deg, #f472b6, #fb923c)", color: "#fff", fontSize: 13, fontWeight: 700, opacity: triggeringShorts ? 0.7 : 1,
+          }}
+        >
+          {triggeringShorts ? "⏳..." : "📱 இப்போதே Short"}
+        </button>
+      </div>
 
       {message && <p style={{ fontSize: 12, color: message.includes("❌") ? "#f87171" : "#4ade80", marginTop: 10, marginBottom: 0 }}>{message}</p>}
     </div>

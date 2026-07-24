@@ -363,6 +363,21 @@ function migrate(db: DatabaseSync) {
     );
   `);
   db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (26, 'auto_story_idea_engine')");
+
+  if (!hasCol("auto_story_settings", "voice")) {
+    db.exec(`ALTER TABLE auto_story_settings ADD COLUMN voice TEXT NOT NULL DEFAULT 'Female — Warm'`);
+  }
+  db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (27, 'auto_story_voice')");
+
+  // Shorts (9:16) automation for the Story channels, same pattern as auto-news's
+  // long-form/shorts split — a separate enable toggle + times list, default 10/day.
+  if (!hasCol("auto_story_settings", "shorts_enabled")) {
+    db.exec("ALTER TABLE auto_story_settings ADD COLUMN shorts_enabled INTEGER NOT NULL DEFAULT 0");
+  }
+  if (!hasCol("auto_story_settings", "shorts_times")) {
+    db.exec(`ALTER TABLE auto_story_settings ADD COLUMN shorts_times TEXT NOT NULL DEFAULT '["09:00","10:30","12:00","13:30","15:00","16:30","18:00","19:30","21:00","22:30"]'`);
+  }
+  db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (28, 'auto_story_shorts')");
 }
 
 export function database() {
@@ -566,19 +581,34 @@ export function updateStoryProject(id: number, fields: Partial<Omit<StoryProject
 
 // ── Story-channel Idea Engine (Tamil Story + English Stories automation) ────
 
-export type AutoStorySettings = { enabled: boolean; times: string[] };
+export type AutoStorySettings = { enabled: boolean; times: string[]; voice: string; shortsEnabled: boolean; shortsTimes: string[] };
+
+function parseTimeList(json: string | undefined, fallback: string[] = []): string[] {
+  if (!json) return fallback;
+  try {
+    const parsed = JSON.parse(json);
+    return Array.isArray(parsed) && parsed.every((t) => typeof t === "string") ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 export function getAutoStorySettings(channel: string): AutoStorySettings {
   const db = database();
-  const row = db.prepare("SELECT enabled, times FROM auto_story_settings WHERE channel = ?").get(channel) as { enabled: number; times: string } | undefined;
-  if (!row) return { enabled: false, times: [] };
-  let times: string[] = [];
-  try {
-    const parsed = JSON.parse(row.times);
-    if (Array.isArray(parsed) && parsed.every((t) => typeof t === "string")) times = parsed;
-  } catch { /* keep [] */ }
-  return { enabled: row.enabled === 1, times };
+  const row = db.prepare("SELECT enabled, times, voice, shorts_enabled, shorts_times FROM auto_story_settings WHERE channel = ?").get(channel) as
+    { enabled: number; times: string; voice: string; shorts_enabled: number; shorts_times: string } | undefined;
+  if (!row) return { enabled: false, times: [], voice: "Female — Warm", shortsEnabled: false, shortsTimes: [] };
+  return {
+    enabled: row.enabled === 1,
+    times: parseTimeList(row.times),
+    voice: row.voice || "Female — Warm",
+    shortsEnabled: row.shorts_enabled === 1,
+    shortsTimes: parseTimeList(row.shorts_times),
+  };
 }
+
+const VALID_STORY_VOICES = ["Female — Warm", "Male — Warm", "Female — Energetic", "Male — Energetic", "Male — Heroic/Firm", "Female — Bright", "Dramatic"];
+const isTimeList = (v: unknown): v is string[] => Array.isArray(v) && v.every((t) => typeof t === "string" && /^([01]\d|2[0-3]):([0-5]\d)$/.test(t));
 
 export function setAutoStorySettings(channel: string, update: Partial<AutoStorySettings>): void {
   const db = database();
@@ -586,8 +616,17 @@ export function setAutoStorySettings(channel: string, update: Partial<AutoStoryS
   if (typeof update.enabled === "boolean") {
     db.prepare("UPDATE auto_story_settings SET enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE channel = ?").run(update.enabled ? 1 : 0, channel);
   }
-  if (Array.isArray(update.times) && update.times.every((t) => /^([01]\d|2[0-3]):([0-5]\d)$/.test(t))) {
+  if (isTimeList(update.times)) {
     db.prepare("UPDATE auto_story_settings SET times = ?, updated_at = CURRENT_TIMESTAMP WHERE channel = ?").run(JSON.stringify(update.times), channel);
+  }
+  if (typeof update.voice === "string" && VALID_STORY_VOICES.includes(update.voice)) {
+    db.prepare("UPDATE auto_story_settings SET voice = ?, updated_at = CURRENT_TIMESTAMP WHERE channel = ?").run(update.voice, channel);
+  }
+  if (typeof update.shortsEnabled === "boolean") {
+    db.prepare("UPDATE auto_story_settings SET shorts_enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE channel = ?").run(update.shortsEnabled ? 1 : 0, channel);
+  }
+  if (isTimeList(update.shortsTimes)) {
+    db.prepare("UPDATE auto_story_settings SET shorts_times = ?, updated_at = CURRENT_TIMESTAMP WHERE channel = ?").run(JSON.stringify(update.shortsTimes), channel);
   }
 }
 

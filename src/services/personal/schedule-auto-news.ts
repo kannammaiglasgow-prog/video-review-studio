@@ -5,6 +5,7 @@ let lastNewsRunKey = "";
 let shortsSlotIndex = 0;
 let lastShortsRunKey = "";
 const lastStoryRunKey: Record<StoryChannel, string> = { story: "", english: "" };
+const lastStoryShortsRunKey: Record<StoryChannel, string> = { story: "", english: "" };
 let storyRunInProgress = false;
 
 function pad(n: number) { return n.toString().padStart(2, "0"); }
@@ -41,11 +42,13 @@ function checkAndRun() {
   }
 
   // ── Story-channel Idea Engine (Tamil Story + English Stories) ──────────────
-  // Runs are heavy (script + TTS + render, several minutes each) so they're
-  // serialized one-at-a-time rather than overlapped if both channels' times coincide.
+  // Runs are heavy (script + TTS + render, several minutes each) so long-form
+  // and Shorts are serialized one-at-a-time (shared flag) rather than overlapped
+  // if multiple channels/formats' times coincide.
   for (const channel of ["story", "english"] as StoryChannel[]) {
     const runKey = `${dateKey}-${hhmm}`;
     const settings = getAutoStorySettings(channel);
+
     if (settings.times.includes(hhmm) && lastStoryRunKey[channel] !== runKey) {
       lastStoryRunKey[channel] = runKey;
       if (!settings.enabled) {
@@ -53,10 +56,25 @@ function checkAndRun() {
       } else if (storyRunInProgress) {
         console.log(`[Scheduler] Story automation (${channel}) skipped at ${hhmm} — another story run is still in progress.`);
       } else {
-        console.log(`[Scheduler] 📖 Story Idea Engine trigger (${channel}) at ${hhmm}`);
+        console.log(`[Scheduler] 📖 Story Idea Engine trigger (${channel}, long) at ${hhmm}`);
         storyRunInProgress = true;
-        runAutoStoryPipeline(channel)
-          .catch(err => console.error(`[Scheduler] Story error (${channel}):`, err))
+        runAutoStoryPipeline(channel, "long")
+          .catch(err => console.error(`[Scheduler] Story error (${channel}, long):`, err))
+          .finally(() => { storyRunInProgress = false; });
+      }
+    }
+
+    if (settings.shortsTimes.includes(hhmm) && lastStoryShortsRunKey[channel] !== runKey) {
+      lastStoryShortsRunKey[channel] = runKey;
+      if (!settings.shortsEnabled) {
+        console.log(`[Scheduler] Story Shorts automation (${channel}) is OFF. Skipping ${hhmm}.`);
+      } else if (storyRunInProgress) {
+        console.log(`[Scheduler] Story Shorts automation (${channel}) skipped at ${hhmm} — another story run is still in progress.`);
+      } else {
+        console.log(`[Scheduler] 📱 Story Idea Engine trigger (${channel}, short) at ${hhmm}`);
+        storyRunInProgress = true;
+        runAutoStoryPipeline(channel, "short")
+          .catch(err => console.error(`[Scheduler] Story error (${channel}, short):`, err))
           .finally(() => { storyRunInProgress = false; });
       }
     }

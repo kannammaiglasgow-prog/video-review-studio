@@ -6,9 +6,15 @@ import { generateIdeaBatch, generateOriginalStoryFromPremise } from "@/services/
 import { runStoryGenerationPipeline } from "@/services/story/pipeline";
 
 export type StoryChannel = "story" | "english";
+export type StoryFormat = "long" | "short";
 
 const POOL_REFILL_THRESHOLD = 5;
 const POOL_REFILL_SIZE = 20;
+
+const FORMAT_CONFIG: Record<StoryFormat, { durationSeconds: number; aspectRatio: "16:9" | "9:16" }> = {
+  long: { durationSeconds: 180, aspectRatio: "16:9" },
+  short: { durationSeconds: 50, aspectRatio: "9:16" },
+};
 
 /** Draws one fresh premise from the local idea pool, refilling it from Gemini
  * first if it's running low. No external scraping at all — Reddit's public API
@@ -28,21 +34,22 @@ export { getAutoStorySettings, setAutoStorySettings };
 type PreparedIdea = { projectId: number; premise: string; pipelineParams: Parameters<typeof runStoryGenerationPipeline>[1] };
 
 /** The FAST half of an automated run: pick a fresh premise, have Gemini write a
- * wholly original story from it, and create the project row. Kept separate
- * from the slow render half so idea-availability/Gemini errors surface
- * immediately to a caller awaiting this — e.g. the manual-trigger API route —
- * instead of being lost inside a fire-and-forget background job. Throws on failure. */
-async function prepareAutoStoryIdea(channel: StoryChannel): Promise<PreparedIdea | null> {
+ * wholly original story from it (sized for the target format — a Short gets a
+ * short script, not the long-form one truncated), and create the project row.
+ * Kept separate from the slow render half so idea-availability/Gemini errors
+ * surface immediately to a caller awaiting this — e.g. the manual-trigger API
+ * route — instead of being lost inside a fire-and-forget background job. */
+async function prepareAutoStoryIdea(channel: StoryChannel, format: StoryFormat = "long"): Promise<PreparedIdea | null> {
   const language = channel === "english" ? "en" : "ta";
   const idea = await fetchFreshIdea();
   if (!idea) return null;
 
-  const durationSeconds = 180;
-  const voice = "Female — Warm";
-  const story = await generateOriginalStoryFromPremise(idea.premise, language);
+  const { durationSeconds, aspectRatio } = FORMAT_CONFIG[format];
+  const voice = getAutoStorySettings(channel).voice;
+  const story = await generateOriginalStoryFromPremise(idea.premise, language, undefined, durationSeconds);
 
   const projectId = createStoryProject(story, durationSeconds, voice, {
-    aspectRatio: "16:9",
+    aspectRatio,
     bgm: true,
     animate: true,
     language,
@@ -59,7 +66,7 @@ async function prepareAutoStoryIdea(channel: StoryChannel): Promise<PreparedIdea
   return {
     projectId,
     premise: idea.premise,
-    pipelineParams: { story, durationSeconds, voice, aspectRatio: "16:9", language, ttsMode: "free", localize: false, mediaDir },
+    pipelineParams: { story, durationSeconds, voice, aspectRatio, language, ttsMode: "free", localize: false, mediaDir },
   };
 }
 
@@ -68,8 +75,8 @@ async function prepareAutoStoryIdea(channel: StoryChannel): Promise<PreparedIdea
  * story → feeds the same render pipeline the manual create form uses. Renders
  * only — does NOT auto-upload (kept for manual review, per the earlier
  * real-publish incident lesson); the dashboard's channel page shows it once done. */
-export async function runAutoStoryPipeline(channel: StoryChannel): Promise<{ projectId: number; premise: string } | { skipped: string }> {
-  const prepared = await prepareAutoStoryIdea(channel);
+export async function runAutoStoryPipeline(channel: StoryChannel, format: StoryFormat = "long"): Promise<{ projectId: number; premise: string } | { skipped: string }> {
+  const prepared = await prepareAutoStoryIdea(channel, format);
   if (!prepared) return { skipped: "Idea pool காலியாக உள்ளது, Gemini-கிட்டயும் புதிய idea கிடைக்கவில்லை" };
   await runStoryGenerationPipeline(prepared.projectId, prepared.pipelineParams);
   return { projectId: prepared.projectId, premise: prepared.premise };
@@ -78,8 +85,8 @@ export async function runAutoStoryPipeline(channel: StoryChannel): Promise<{ pro
 /** Manual-trigger version: awaits only the fast idea-prep half (so errors
  * return immediately to the HTTP caller), then lets the slow render run in the
  * background — same fire-and-forget convention as the manual create route. */
-export async function triggerAutoStoryOnce(channel: StoryChannel): Promise<{ projectId: number; premise: string } | { skipped: string }> {
-  const prepared = await prepareAutoStoryIdea(channel);
+export async function triggerAutoStoryOnce(channel: StoryChannel, format: StoryFormat = "long"): Promise<{ projectId: number; premise: string } | { skipped: string }> {
+  const prepared = await prepareAutoStoryIdea(channel, format);
   if (!prepared) return { skipped: "Idea pool காலியாக உள்ளது, Gemini-கிட்டயும் புதிய idea கிடைக்கவில்லை" };
   runStoryGenerationPipeline(prepared.projectId, prepared.pipelineParams);
   return { projectId: prepared.projectId, premise: prepared.premise };

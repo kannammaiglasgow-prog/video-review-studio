@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAutoStorySettings, setAutoStorySettings } from "@/lib/database";
-import { triggerAutoStoryOnce, type StoryChannel } from "@/services/personal/auto-story";
+import { triggerAutoStoryOnce, type StoryChannel, type StoryFormat } from "@/services/personal/auto-story";
 
 export const runtime = "nodejs";
 export const maxDuration = 600;
@@ -25,19 +25,23 @@ export async function POST(request: Request, context: { params: Promise<{ channe
   try {
     const body = await request.json();
 
-    if (typeof body.enabled === "boolean" || Array.isArray(body.times)) {
+    if (typeof body.enabled === "boolean" || Array.isArray(body.times) || typeof body.voice === "string" || typeof body.shortsEnabled === "boolean" || Array.isArray(body.shortsTimes)) {
       setAutoStorySettings(ch, {
         enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
         times: Array.isArray(body.times) ? body.times : undefined,
+        voice: typeof body.voice === "string" ? body.voice : undefined,
+        shortsEnabled: typeof body.shortsEnabled === "boolean" ? body.shortsEnabled : undefined,
+        shortsTimes: Array.isArray(body.shortsTimes) ? body.shortsTimes : undefined,
       });
       return NextResponse.json({ success: true, ...getAutoStorySettings(ch) });
     }
 
     if (body.trigger === true) {
+      const format: StoryFormat = body.format === "short" ? "short" : "long";
       // Awaits only the fast idea-pick+script step, so a missing Reddit app or
       // "no fresh ideas" surfaces here immediately; the render itself continues
       // in the background and shows up via story_projects status polling.
-      const result = await triggerAutoStoryOnce(ch);
+      const result = await triggerAutoStoryOnce(ch, format);
       if ("skipped" in result) return NextResponse.json({ success: false, error: result.skipped });
       return NextResponse.json({ success: true, projectId: result.projectId, message: `Idea Engine தொடங்கியது (Project #${result.projectId}) — Dashboard channel page-ல் status பாருங்கள்` });
     }
