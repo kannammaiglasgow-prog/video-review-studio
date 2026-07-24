@@ -38,7 +38,14 @@ export async function runStoryGenerationPipeline(projectId: number, params: Stor
     const script = await expandScriptForDuration(story, durationSeconds, projectId, language, localize);
     updateStoryProject(projectId, { script, status: "writing_scenes" });
 
-    const scenes = await generateSceneBreakdown(script, durationSeconds, projectId, language);
+    // AI-generated images are paced/rate-limited (free Pollinations endpoint —
+    // see downloadScenedAIMedia), so an "ai" project uses fewer, longer-held
+    // scenes (~18s each via Ken Burns pan/zoom) instead of stock's 6s/scene —
+    // a 3-minute video needs ~10 AI images instead of ~30, cutting generation
+    // time roughly 3x. Visually this is a normal held-image style, not a
+    // quality compromise.
+    const secondsPerScene = mediaSource === "ai" ? 18 : 6;
+    const scenes = await generateSceneBreakdown(script, durationSeconds, projectId, language, secondsPerScene);
     updateStoryProject(projectId, { scenes_json: JSON.stringify(scenes), status: "generating_audio" });
 
     const audioPath = path.join(mediaDir, "narration.wav");
