@@ -388,6 +388,14 @@ function migrate(db: DatabaseSync) {
   }
   db.exec("INSERT OR IGNORE INTO auto_story_settings (channel, enabled, times, shorts_times) VALUES ('devotional', 0, '[\"08:30\",\"18:30\"]', '[\"09:00\",\"10:30\",\"12:00\",\"13:30\",\"15:00\",\"16:30\",\"18:00\",\"19:30\",\"21:00\",\"22:30\"]')");
   db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (29, 'auto_story_devotional_genre')");
+
+  // Lets the Idea Engine automation opt into free AI-generated (Pollinations/
+  // Flux) scene images instead of stock footage, same choice the manual create
+  // page now has.
+  if (!hasCol("auto_story_settings", "media_source")) {
+    db.exec(`ALTER TABLE auto_story_settings ADD COLUMN media_source TEXT NOT NULL DEFAULT 'stock'`);
+  }
+  db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (30, 'auto_story_media_source')");
 }
 
 export function database() {
@@ -454,7 +462,7 @@ export type StoryProjectRow = {
   updated_at: string;
 };
 
-export type StoryOptions = { aspectRatio?: "16:9" | "9:16"; bgm?: boolean; animate?: boolean; language?: "ta" | "en"; mediaSource?: "flow" | "stock"; ttsMode?: "free" | "paid"; localize?: boolean; intendedChannel?: string };
+export type StoryOptions = { aspectRatio?: "16:9" | "9:16"; bgm?: boolean; animate?: boolean; language?: "ta" | "en"; mediaSource?: "stock" | "ai"; ttsMode?: "free" | "paid"; localize?: boolean; intendedChannel?: string };
 
 export function createStoryProject(storyInput: string, durationTarget: number, voice: string, options: StoryOptions = {}): number {
   const db = database();
@@ -468,7 +476,7 @@ export function createStoryProject(storyInput: string, durationTarget: number, v
     options.bgm ? 1 : 0,
     options.animate === false ? 0 : 1,
     options.language === "en" ? "en" : "ta",
-    options.mediaSource === "stock" ? "stock" : "flow",
+    options.mediaSource === "ai" ? "ai" : "stock",
     options.ttsMode === "free" ? "free" : "paid",
     options.localize ? 1 : 0,
     options.intendedChannel || null,
@@ -591,7 +599,7 @@ export function updateStoryProject(id: number, fields: Partial<Omit<StoryProject
 
 // ── Story-channel Idea Engine (Tamil Story + English Stories automation) ────
 
-export type AutoStorySettings = { enabled: boolean; times: string[]; voice: string; shortsEnabled: boolean; shortsTimes: string[] };
+export type AutoStorySettings = { enabled: boolean; times: string[]; voice: string; shortsEnabled: boolean; shortsTimes: string[]; mediaSource: "stock" | "ai" };
 
 function parseTimeList(json: string | undefined, fallback: string[] = []): string[] {
   if (!json) return fallback;
@@ -605,15 +613,16 @@ function parseTimeList(json: string | undefined, fallback: string[] = []): strin
 
 export function getAutoStorySettings(channel: string): AutoStorySettings {
   const db = database();
-  const row = db.prepare("SELECT enabled, times, voice, shorts_enabled, shorts_times FROM auto_story_settings WHERE channel = ?").get(channel) as
-    { enabled: number; times: string; voice: string; shorts_enabled: number; shorts_times: string } | undefined;
-  if (!row) return { enabled: false, times: [], voice: "Female — Warm", shortsEnabled: false, shortsTimes: [] };
+  const row = db.prepare("SELECT enabled, times, voice, shorts_enabled, shorts_times, media_source FROM auto_story_settings WHERE channel = ?").get(channel) as
+    { enabled: number; times: string; voice: string; shorts_enabled: number; shorts_times: string; media_source: string } | undefined;
+  if (!row) return { enabled: false, times: [], voice: "Female — Warm", shortsEnabled: false, shortsTimes: [], mediaSource: "stock" };
   return {
     enabled: row.enabled === 1,
     times: parseTimeList(row.times),
     voice: row.voice || "Female — Warm",
     shortsEnabled: row.shorts_enabled === 1,
     shortsTimes: parseTimeList(row.shorts_times),
+    mediaSource: row.media_source === "ai" ? "ai" : "stock",
   };
 }
 
@@ -637,6 +646,9 @@ export function setAutoStorySettings(channel: string, update: Partial<AutoStoryS
   }
   if (isTimeList(update.shortsTimes)) {
     db.prepare("UPDATE auto_story_settings SET shorts_times = ?, updated_at = CURRENT_TIMESTAMP WHERE channel = ?").run(JSON.stringify(update.shortsTimes), channel);
+  }
+  if (update.mediaSource === "stock" || update.mediaSource === "ai") {
+    db.prepare("UPDATE auto_story_settings SET media_source = ?, updated_at = CURRENT_TIMESTAMP WHERE channel = ?").run(update.mediaSource, channel);
   }
 }
 

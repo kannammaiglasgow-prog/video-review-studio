@@ -9,6 +9,7 @@ import { edgeSpeechProvider } from "@/services/providers/edge-tts";
 import { probeAudioDuration } from "@/services/render/ffprobe";
 import { expandScriptForDuration, generateSceneBreakdown } from "@/services/story/generator";
 import { downloadScenedStockMedia } from "@/services/providers/stock-media";
+import { downloadScenedAIMedia } from "@/services/providers/pollinations";
 import { renderVideo, type SceneClip } from "@/services/render/ffmpeg";
 
 export type StoryPipelineParams = {
@@ -20,6 +21,9 @@ export type StoryPipelineParams = {
   ttsMode: "free" | "paid";
   localize: boolean;
   mediaDir: string;
+  // "stock" = free Pexels/Pixabay footage (default, most reliable); "ai" = free
+  // Pollinations/Flux image generated per scene from its own detailed prompt.
+  mediaSource?: "stock" | "ai";
 };
 
 /** Script → scenes → TTS narration → copyright-free stock media, fully automatic.
@@ -29,7 +33,7 @@ export type StoryPipelineParams = {
  * is recorded on the project itself (status='failed') rather than thrown, since
  * both callers run this in the background after already responding/logging. */
 export async function runStoryGenerationPipeline(projectId: number, params: StoryPipelineParams): Promise<void> {
-  const { story, durationSeconds, voice, aspectRatio, language, ttsMode, localize, mediaDir } = params;
+  const { story, durationSeconds, voice, aspectRatio, language, ttsMode, localize, mediaDir, mediaSource = "stock" } = params;
   try {
     const script = await expandScriptForDuration(story, durationSeconds, projectId, language, localize);
     updateStoryProject(projectId, { script, status: "writing_scenes" });
@@ -56,29 +60,41 @@ export async function runStoryGenerationPipeline(projectId: number, params: Stor
       status: "fetching_media",
     });
 
-    // Auto-fetch copyright-free video/images (Pexels/Pixabay) per scene so
-    // the video is ready with no manual step. Fully automatic.
+    // Fetch scene media so the video is ready with no manual step. Fully
+    // automatic — "stock" pulls free Pexels/Pixabay footage by keyword; "ai"
+    // generates a free Pollinations/Flux image per scene from its own prompt.
     try {
       const orientation = aspectRatio === "9:16" ? "portrait" : "landscape";
-      const sceneSearchTerms = rescaledScenes.map((s) =>
-        s.searchTerms?.length ? s.searchTerms : [s.narrationExcerpt || s.prompt].filter(Boolean),
-      );
-      const { files } = await downloadScenedStockMedia(sceneSearchTerms, orientation, mediaDir);
-      // downloadScenedStockMedia writes stock-<i>.<ext>; the render pipeline
-      // expects scene_<i>.<ext>, so rename each into place (order = scene index).
-      for (let i = 0; i < files.length; i++) {
-        const ext = path.extname(files[i]);
-        await fsp.rename(files[i], path.join(mediaDir, `scene_${i}${ext}`)).catch(() => {});
+
+      if (mediaSource === "ai") {
+        const scenePrompts = rescaledScenes.map((s) => s.prompt);
+        const { files } = await downloadScenedAIMedia(scenePrompts, orientation, mediaDir);
+        const gotAll = files.length > 0 && files.every((f) => f !== null);
+        updateStoryProject(projectId, {
+          status: "script_ready",
+          error_message: gotAll ? null : "சில scenes-க்கு AI image generate ஆகவில்லை — கீழே manual-ஆக upload செய்யவும்",
+        });
+      } else {
+        const sceneSearchTerms = rescaledScenes.map((s) =>
+          s.searchTerms?.length ? s.searchTerms : [s.narrationExcerpt || s.prompt].filter(Boolean),
+        );
+        const { files } = await downloadScenedStockMedia(sceneSearchTerms, orientation, mediaDir);
+        // downloadScenedStockMedia writes stock-<i>.<ext>; the render pipeline
+        // expects scene_<i>.<ext>, so rename each into place (order = scene index).
+        for (let i = 0; i < files.length; i++) {
+          const ext = path.extname(files[i]);
+          await fsp.rename(files[i], path.join(mediaDir, `scene_${i}${ext}`)).catch(() => {});
+        }
+        const gotAll = files.length > 0 && files.length === rescaledScenes.length;
+        updateStoryProject(projectId, {
+          status: "script_ready",
+          error_message: gotAll ? null : "சில scenes-க்கு stock media கிடைக்கவில்லை — keywords-ஐ மாற்றவும், அல்லது கீழே manual-ஆக upload செய்யவும்",
+        });
       }
-      const gotAll = files.length > 0 && files.length === rescaledScenes.length;
+    } catch (mediaError) {
       updateStoryProject(projectId, {
         status: "script_ready",
-        error_message: gotAll ? null : "சில scenes-க்கு stock media கிடைக்கவில்லை — keywords-ஐ மாற்றவும், அல்லது கீழே manual-ஆக upload செய்யவும்",
-      });
-    } catch (stockError) {
-      updateStoryProject(projectId, {
-        status: "script_ready",
-        error_message: `Stock media fetch பிழை: ${stockError instanceof Error ? stockError.message : String(stockError)}`,
+        error_message: `Scene media fetch பிழை: ${mediaError instanceof Error ? mediaError.message : String(mediaError)}`,
       });
     }
   } catch (error) {

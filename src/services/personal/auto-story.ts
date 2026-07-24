@@ -56,7 +56,8 @@ async function prepareAutoStoryIdea(channel: StoryChannel, format: StoryFormat =
   if (!idea) return null;
 
   const { durationSeconds, aspectRatio } = FORMAT_CONFIG[format];
-  const voice = getAutoStorySettings(channel).voice;
+  const settings = getAutoStorySettings(channel);
+  const voice = settings.voice;
   const story = genre === "devotional"
     ? await generateDevotionalScriptFromPremise(idea.premise, undefined, durationSeconds)
     : await generateOriginalStoryFromPremise(idea.premise, language, undefined, durationSeconds);
@@ -66,7 +67,7 @@ async function prepareAutoStoryIdea(channel: StoryChannel, format: StoryFormat =
     bgm: true,
     animate: true,
     language,
-    mediaSource: "stock",
+    mediaSource: settings.mediaSource,
     ttsMode: "free",
     localize: false,
     intendedChannel: channel,
@@ -79,7 +80,7 @@ async function prepareAutoStoryIdea(channel: StoryChannel, format: StoryFormat =
   return {
     projectId,
     premise: idea.premise,
-    pipelineParams: { story, durationSeconds, voice, aspectRatio, language, ttsMode: "free", localize: false, mediaDir },
+    pipelineParams: { story, durationSeconds, voice, aspectRatio, language, ttsMode: "free", localize: false, mediaDir, mediaSource: settings.mediaSource },
   };
 }
 

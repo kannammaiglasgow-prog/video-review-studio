@@ -25,13 +25,14 @@ export async function POST(request: Request, context: { params: Promise<{ channe
   try {
     const body = await request.json();
 
-    if (typeof body.enabled === "boolean" || Array.isArray(body.times) || typeof body.voice === "string" || typeof body.shortsEnabled === "boolean" || Array.isArray(body.shortsTimes)) {
+    if (typeof body.enabled === "boolean" || Array.isArray(body.times) || typeof body.voice === "string" || typeof body.shortsEnabled === "boolean" || Array.isArray(body.shortsTimes) || typeof body.mediaSource === "string") {
       setAutoStorySettings(ch, {
         enabled: typeof body.enabled === "boolean" ? body.enabled : undefined,
         times: Array.isArray(body.times) ? body.times : undefined,
         voice: typeof body.voice === "string" ? body.voice : undefined,
         shortsEnabled: typeof body.shortsEnabled === "boolean" ? body.shortsEnabled : undefined,
         shortsTimes: Array.isArray(body.shortsTimes) ? body.shortsTimes : undefined,
+        mediaSource: body.mediaSource === "ai" ? "ai" : body.mediaSource === "stock" ? "stock" : undefined,
       });
       return NextResponse.json({ success: true, ...getAutoStorySettings(ch) });
     }

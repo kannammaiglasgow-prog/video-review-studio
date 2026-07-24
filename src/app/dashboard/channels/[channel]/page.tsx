@@ -102,6 +102,7 @@ function IdeaEngineAutomation({ channel }: { channel: "story" | "english" | "dev
   const [shortsTimes, setShortsTimes] = useState<string[]>([]);
   const [newShortsTime, setNewShortsTime] = useState("09:00");
   const [voice, setVoice] = useState("Female — Warm");
+  const [mediaSource, setMediaSource] = useState<"stock" | "ai">("stock");
   const [saving, setSaving] = useState(false);
   const [triggering, setTriggering] = useState(false);
   const [triggeringShorts, setTriggeringShorts] = useState(false);
@@ -116,6 +117,7 @@ function IdeaEngineAutomation({ channel }: { channel: "story" | "english" | "dev
       setShortsEnabled(Boolean(data.shortsEnabled));
       setShortsTimes(data.shortsTimes || []);
       setVoice(data.voice || "Female — Warm");
+      setMediaSource(data.mediaSource === "ai" ? "ai" : "stock");
     } catch { /* ignore */ }
   }, [channel]);
 
@@ -139,6 +141,12 @@ function IdeaEngineAutomation({ channel }: { channel: "story" | "english" | "dev
     setVoice(next);
     await fetch(`/api/auto-story/${channel}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ voice: next }) });
     setMessage(`🗣️ குரல் "${storyVoiceOptions.find((o) => o.value === next)?.label}" ஆக மாற்றப்பட்டது`);
+  };
+
+  const changeMediaSource = async (next: "stock" | "ai") => {
+    setMediaSource(next);
+    await fetch(`/api/auto-story/${channel}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mediaSource: next }) });
+    setMessage(next === "ai" ? "🎨 Scene media — AI Generated (Pollinations/Flux) ஆக மாற்றப்பட்டது" : "🎬 Scene media — Stock footage ஆக மாற்றப்பட்டது");
   };
 
   const saveAll = async () => {
@@ -215,6 +223,19 @@ Gemini-யே ஒரு idea (situation) invent பண்ணி, அதிலி
         }}
       >
         {storyVoiceOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+      </select>
+
+      <label style={{ display: "block", marginBottom: 6, color: "#a0a0c0", fontSize: 13 }}>Scene Media</label>
+      <select
+        value={mediaSource}
+        onChange={(e) => changeMediaSource(e.target.value as "stock" | "ai")}
+        style={{
+          width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)",
+          background: "#0f0f1e", color: "#fff", fontSize: 13, marginBottom: 14,
+        }}
+      >
+        <option value="stock">🎬 Stock footage (Pexels/Pixabay, free)</option>
+        <option value="ai">🎨 AI Generated (Pollinations/Flux, free)</option>
       </select>
 
       <div style={{ display: "flex", gap: 10 }}>

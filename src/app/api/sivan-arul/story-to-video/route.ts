@@ -18,9 +18,9 @@ export async function POST(request: Request) {
     const bgm = Boolean(body.bgm);
     const animate = body.animate !== false; // default on
     const language: "ta" | "en" = body.language === "en" ? "en" : "ta";
-    // Scene media is always copyright-free stock (Pexels/Pixabay) — Google Flow
-    // browser-automation has been removed.
-    const mediaSource = "stock" as const;
+    // Scene media: "stock" = free Pexels/Pixabay footage (default, most
+    // reliable); "ai" = free Pollinations/Flux image generated per scene.
+    const mediaSource: "stock" | "ai" = body.mediaSource === "ai" ? "ai" : "stock";
     const ttsMode: "free" | "paid" = body.ttsMode === "free" ? "free" : "paid";
     const localize = Boolean(body.localize);
     const intendedChannel = typeof body.channel === "string" && body.channel ? body.channel : "story";
@@ -34,7 +34,7 @@ export async function POST(request: Request) {
 
     // Errors are recorded on the project itself (status='failed') by the pipeline,
     // not thrown here — this response has already been sent by the time it matters.
-    runStoryGenerationPipeline(projectId, { story, durationSeconds, voice, aspectRatio, language, ttsMode, localize, mediaDir });
+    runStoryGenerationPipeline(projectId, { story, durationSeconds, voice, aspectRatio, language, ttsMode, localize, mediaDir, mediaSource });
 
     return NextResponse.json({ success: true, projectId });
   } catch (error) {

@@ -84,6 +84,7 @@ export default function StoryToVideoPage() {
   const [animate, setAnimate] = useState(true);
   const [language, setLanguage] = useState<"ta" | "en">("ta");
   const [ttsMode, setTtsMode] = useState<"free" | "paid">("free");
+  const [mediaSource, setMediaSource] = useState<"stock" | "ai">("stock");
   const [localize, setLocalize] = useState(false);
   const [autoUpload, setAutoUpload] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -237,7 +238,7 @@ export default function StoryToVideoPage() {
       const res = await fetch("/api/sivan-arul/story-to-video", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ story, durationSeconds: durationMinutes * 60, voice, aspectRatio, bgm, animate, language, ttsMode, localize, channel }),
+        body: JSON.stringify({ story, durationSeconds: durationMinutes * 60, voice, aspectRatio, bgm, animate, language, ttsMode, mediaSource, localize, channel }),
       });
       const data = await res.json();
       if (data.success) {
@@ -604,6 +605,13 @@ export default function StoryToVideoPage() {
                   <option value="free">🆓 Free — edge-tts (no cost)</option>
                 </select>
               </div>
+              <div style={{ flex: "1 1 200px" }}>
+                <label style={label}>Scene Media</label>
+                <select value={mediaSource} onChange={(e) => setMediaSource(e.target.value as "stock" | "ai")} style={input}>
+                  <option value="stock">🎬 Stock footage (Pexels/Pixabay, free)</option>
+                  <option value="ai">🎨 AI Generated (Pollinations/Flux, free)</option>
+                </select>
+              </div>
               <div style={{ flex: "1 1 200px", display: "flex", flexDirection: "column", justifyContent: "flex-end", gap: 8 }}>
                 <label style={{ ...label, marginBottom: 0, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}>
                   <input type="checkbox" checked={bgm} onChange={(e) => setBgm(e.target.checked)} /> 🎵 Background music (soft)
@@ -655,7 +663,7 @@ export default function StoryToVideoPage() {
                 <span style={{ fontSize: 13, color: "#c0c0d8" }}>
                   🗣️ {project.language === "en" ? "English" : "தமிழ்"}
                   {project.localize ? " 🌏Localized" : ""}
-                  {" · "}🎬 Stock
+                  {" · "}{project.mediaSource === "ai" ? "🎨 AI" : "🎬 Stock"}
                   {" · "}{project.ttsMode === "free" ? "🆓 Free TTS" : "💎 Paid TTS"}
                   {" · "}{project.aspectRatio === "9:16" ? "📱 Short 9:16" : "🖥️ Long 16:9"}
                   {" · "}🎵 BGM {project.bgmEnabled ? "On" : "Off"}
