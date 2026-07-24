@@ -150,8 +150,7 @@ function IdeaEngineAutomation({ channel }: { channel: "story" | "english" }) {
   };
 
   const triggerNow = async (format: "long" | "short") => {
-    const setBusy = format === "long" ? setTriggering : setTriggeringShorts;
-    setBusy(true);
+    setTriggering(true);
     setMessage("");
     try {
       const res = await fetch(`/api/auto-story/${channel}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trigger: true, format }) });
@@ -160,7 +159,24 @@ function IdeaEngineAutomation({ channel }: { channel: "story" | "english" }) {
     } catch {
       setMessage("❌ Trigger தோல்வி");
     } finally {
-      setBusy(false);
+      setTriggering(false);
+    }
+  };
+
+  // "Short" button queues a full batch (default 10, or however many times are
+  // configured below) — each draws its own fresh idea, so all are different themes.
+  const triggerShortsBatch = async () => {
+    setTriggeringShorts(true);
+    setMessage("");
+    try {
+      const count = shortsTimes.length || 10;
+      const res = await fetch(`/api/auto-story/${channel}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ triggerBatch: true, format: "short", count }) });
+      const data = await res.json();
+      setMessage(data.success ? `🚀 ${data.message}` : `❌ ${data.error}`);
+    } catch {
+      setMessage("❌ Trigger தோல்வி");
+    } finally {
+      setTriggeringShorts(false);
     }
   };
 
@@ -213,16 +229,19 @@ Gemini-யே ஒரு idea (situation) invent பண்ணி, அதிலி
           {triggering ? "⏳..." : "🚀 இப்போதே Long Video"}
         </button>
         <button
-          onClick={() => triggerNow("short")}
+          onClick={triggerShortsBatch}
           disabled={triggeringShorts}
           style={{
             flex: 1, padding: "12px 0", borderRadius: 10, border: "none", cursor: triggeringShorts ? "wait" : "pointer",
             background: "linear-gradient(90deg, #f472b6, #fb923c)", color: "#fff", fontSize: 13, fontWeight: 700, opacity: triggeringShorts ? 0.7 : 1,
           }}
         >
-          {triggeringShorts ? "⏳..." : "📱 இப்போதே Short"}
+          {triggeringShorts ? "⏳..." : `📱 இப்போதே ${shortsTimes.length || 10} Shorts`}
         </button>
       </div>
+      <p style={{ fontSize: 11, color: "#707090", marginTop: 8, marginBottom: 0 }}>
+        📱 Shorts button-ல் {shortsTimes.length || 10} shorts வரிசையாக (ஒவ்வொன்றும் வேற theme-ல்) generate ஆகும் — ஒரே நேரத்தில் ஒன்று மட்டும், render முடிந்ததும் அடுத்தது தொடங்கும்.
+      </p>
 
       {message && <p style={{ fontSize: 12, color: message.includes("❌") ? "#f87171" : "#4ade80", marginTop: 10, marginBottom: 0 }}>{message}</p>}
     </div>

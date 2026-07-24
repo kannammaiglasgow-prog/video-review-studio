@@ -3,7 +3,7 @@ import fsp from "node:fs/promises";
 import { config } from "@/lib/config";
 import { createStoryProject, getAutoStorySettings, setAutoStorySettings, getUnusedIdea, addIdeasToPool, markIdeaPoolUsed, countUnusedIdeas, type StoryIdea } from "@/lib/database";
 import { generateIdeaBatch, generateOriginalStoryFromPremise } from "@/services/story/generator";
-import { runStoryGenerationPipeline } from "@/services/story/pipeline";
+import { runStoryGenerationPipeline, renderStoryVideo } from "@/services/story/pipeline";
 
 export type StoryChannel = "story" | "english";
 export type StoryFormat = "long" | "short";
@@ -70,24 +70,83 @@ async function prepareAutoStoryIdea(channel: StoryChannel, format: StoryFormat =
   };
 }
 
+/** Script → scenes → TTS → stock media, THEN the actual FFmpeg render — unlike
+ * the manual create flow, automation has no human to review scene images
+ * first, and no browser tab guaranteed to ever open this project (the
+ * story-to-video page's auto-render effect only fires for a project that's
+ * actively loaded client-side), so this calls renderStoryVideo directly
+ * server-side. If some scenes failed to get stock media, renderStoryVideo
+ * safely no-ops (stays at 'script_ready', visible in the dashboard as
+ * needing attention) rather than forcing a broken render. */
+async function generateAndRender(prepared: PreparedIdea): Promise<void> {
+  await runStoryGenerationPipeline(prepared.projectId, prepared.pipelineParams);
+  const renderResult = await renderStoryVideo(prepared.projectId);
+  if (!renderResult.success) {
+    console.log(`[AutoStory] project #${prepared.projectId} not rendered yet: ${renderResult.error}`);
+  }
+}
+
+// Shared across the scheduler and any manual batch trigger so two heavy
+// renders (script + TTS + FFmpeg, several minutes each) never run at once.
+let runInProgress = false;
+
+async function runOneLocked(channel: StoryChannel, format: StoryFormat): Promise<{ projectId: number; premise: string } | { skipped: string }> {
+  if (runInProgress) return { skipped: "இன்னொரு story generation ஏற்கனவே நடந்துகொண்டிருக்கிறது — கொஞ்சம் கழித்து முயற்சிக்கவும்" };
+  runInProgress = true;
+  try {
+    const prepared = await prepareAutoStoryIdea(channel, format);
+    if (!prepared) return { skipped: "Idea pool காலியாக உள்ளது, Gemini-கிட்டயும் புதிய idea கிடைக்கவில்லை" };
+    await generateAndRender(prepared);
+    return { projectId: prepared.projectId, premise: prepared.premise };
+  } finally {
+    runInProgress = false;
+  }
+}
+
 /** Full automated run, used by the scheduler (awaited end-to-end so heavy runs
  * stay serialized): pick a fresh premise → Gemini writes a wholly original
- * story → feeds the same render pipeline the manual create form uses. Renders
- * only — does NOT auto-upload (kept for manual review, per the earlier
- * real-publish incident lesson); the dashboard's channel page shows it once done. */
+ * story → feeds the same render pipeline the manual create form uses, then
+ * renders the actual video file. Does NOT auto-upload (kept for manual
+ * review, per the earlier real-publish incident lesson); the dashboard's
+ * channel page shows it once done. */
 export async function runAutoStoryPipeline(channel: StoryChannel, format: StoryFormat = "long"): Promise<{ projectId: number; premise: string } | { skipped: string }> {
-  const prepared = await prepareAutoStoryIdea(channel, format);
-  if (!prepared) return { skipped: "Idea pool காலியாக உள்ளது, Gemini-கிட்டயும் புதிய idea கிடைக்கவில்லை" };
-  await runStoryGenerationPipeline(prepared.projectId, prepared.pipelineParams);
-  return { projectId: prepared.projectId, premise: prepared.premise };
+  return runOneLocked(channel, format);
 }
 
 /** Manual-trigger version: awaits only the fast idea-prep half (so errors
- * return immediately to the HTTP caller), then lets the slow render run in the
- * background — same fire-and-forget convention as the manual create route. */
+ * return immediately to the HTTP caller), then lets the slow generate+render
+ * run in the background — same fire-and-forget convention as the manual
+ * create route. Note: unlike the scheduler/batch path this does NOT take the
+ * shared lock (a single manual click is low-risk to overlap with a scheduled
+ * run; only the batch loop needs strict serialization). */
 export async function triggerAutoStoryOnce(channel: StoryChannel, format: StoryFormat = "long"): Promise<{ projectId: number; premise: string } | { skipped: string }> {
   const prepared = await prepareAutoStoryIdea(channel, format);
   if (!prepared) return { skipped: "Idea pool காலியாக உள்ளது, Gemini-கிட்டயும் புதிய idea கிடைக்கவில்லை" };
-  runStoryGenerationPipeline(prepared.projectId, prepared.pipelineParams);
+  generateAndRender(prepared).catch((err) => console.error(`[AutoStory] manual trigger render failed for #${prepared.projectId}:`, err));
   return { projectId: prepared.projectId, premise: prepared.premise };
+}
+
+/** Queues `count` sequential generations in the background (the caller doesn't
+ * await this — it returns immediately). Each iteration draws its own fresh
+ * idea from the pool, so all `count` videos are genuinely different themes —
+ * this is what the dashboard's "10 Shorts" batch trigger calls. Runs one at a
+ * time through the same lock as the scheduler, so a manual batch and a
+ * scheduled run never render concurrently (an overlap just skips that slot
+ * rather than corrupting anything — logged, not thrown, since nothing is
+ * awaiting this call to report back to). */
+export function triggerAutoStoryBatch(channel: StoryChannel, format: StoryFormat, count: number): void {
+  (async () => {
+    for (let i = 0; i < count; i++) {
+      try {
+        const result = await runOneLocked(channel, format);
+        if ("skipped" in result) {
+          console.log(`[AutoStory:${channel}] batch ${i + 1}/${count} skipped: ${result.skipped}`);
+        } else {
+          console.log(`[AutoStory:${channel}] batch ${i + 1}/${count} done: project #${result.projectId}`);
+        }
+      } catch (err) {
+        console.error(`[AutoStory:${channel}] batch ${i + 1}/${count} failed:`, err);
+      }
+    }
+  })();
 }

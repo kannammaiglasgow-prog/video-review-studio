@@ -1,12 +1,15 @@
+import fs from "node:fs";
 import path from "node:path";
 import fsp from "node:fs/promises";
-import { updateStoryProject } from "@/lib/database";
+import { config } from "@/lib/config";
+import { getStoryProject, updateStoryProject, type StoryScene } from "@/lib/database";
 import type { OutputLanguage } from "@/lib/config";
 import { geminiSpeechProvider } from "@/services/providers/gemini";
 import { edgeSpeechProvider } from "@/services/providers/edge-tts";
 import { probeAudioDuration } from "@/services/render/ffprobe";
 import { expandScriptForDuration, generateSceneBreakdown } from "@/services/story/generator";
 import { downloadScenedStockMedia } from "@/services/providers/stock-media";
+import { renderVideo, type SceneClip } from "@/services/render/ffmpeg";
 
 export type StoryPipelineParams = {
   story: string;
@@ -82,3 +85,85 @@ export async function runStoryGenerationPipeline(projectId: number, params: Stor
     updateStoryProject(projectId, { status: "failed", error_message: error instanceof Error ? error.message : String(error) });
   }
 }
+
+const SCENE_MEDIA_EXTS = [".jpg", ".jpeg", ".png", ".webp", ".mp4", ".mov", ".webm"];
+
+function findScenePath(mediaDir: string, index: number): string | null {
+  for (const ext of SCENE_MEDIA_EXTS) {
+    const candidate = path.join(mediaDir, `scene_${index}${ext}`);
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+type RenderReadiness =
+  | { ready: true; audioPath: string; aspectRatio: "16:9" | "9:16"; audioDuration: number | null; bgmEnabled: boolean; animate: boolean; sceneClips: SceneClip[] }
+  | { ready: false; error: string };
+
+/** Fast, synchronous-ish check (no FFmpeg) — same "script_ready with every
+ * scene's media file present" gate the manual UI uses before "Render Video"
+ * becomes clickable. Used by the render API route to return validation errors
+ * immediately, and internally by renderStoryVideo. */
+function checkStoryReadyToRender(projectId: number): RenderReadiness {
+  const row = getStoryProject(projectId);
+  if (!row) return { ready: false, error: "Project கிடைக்கவில்லை" };
+  if (!row.audio_path || !fs.existsSync(row.audio_path)) return { ready: false, error: "Narration audio இன்னும் தயாராகவில்லை" };
+
+  const scenes: StoryScene[] = row.scenes_json ? JSON.parse(row.scenes_json) : [];
+  if (scenes.length === 0) return { ready: false, error: "Scenes இல்லை" };
+
+  const mediaDir = path.join(config.mediaRoot, "story", String(projectId));
+  const sceneClips: SceneClip[] = [];
+  const missing: number[] = [];
+  scenes.forEach((scene, index) => {
+    const scenePath = findScenePath(mediaDir, index);
+    if (!scenePath) { missing.push(index + 1); return; }
+    sceneClips.push({ path: scenePath, seconds: scene.seconds });
+  });
+  if (missing.length > 0) return { ready: false, error: `இந்த scene எண்களுக்கு படங்கள் இல்லை: ${missing.join(", ")}` };
+
+  return {
+    ready: true,
+    audioPath: row.audio_path,
+    aspectRatio: row.aspect_ratio === "9:16" ? "9:16" : "16:9",
+    audioDuration: row.audio_duration,
+    bgmEnabled: row.bgm_enabled === 1,
+    animate: row.animate_enabled !== 0,
+    sceneClips,
+  };
+}
+
+/** FFmpeg render step — extracted from the manual render API route so the Idea
+ * Engine automation can call it directly server-side too (no HTTP self-call,
+ * and no reliance on the story-to-video page's client-side auto-render effect
+ * ever being opened in a browser). Awaits the full render and reports the
+ * real outcome — callers that want a fast ack should check
+ * `checkStoryReadyToRender`-style validation first and fire this without
+ * awaiting, as the manual render route does. */
+export async function renderStoryVideo(projectId: number): Promise<{ success: true } | { success: false; error: string }> {
+  const check = checkStoryReadyToRender(projectId);
+  if (!check.ready) return { success: false, error: check.error };
+
+  const mediaDir = path.join(config.mediaRoot, "story", String(projectId));
+  updateStoryProject(projectId, { status: "rendering" });
+  try {
+    const outputPath = path.join(mediaDir, "output.mp4");
+    await renderVideo({
+      aspectRatio: check.aspectRatio,
+      audioPath: check.audioPath,
+      scenes: check.sceneClips,
+      outputPath,
+      targetDuration: check.audioDuration || check.sceneClips.reduce((sum, scene) => sum + scene.seconds, 0),
+      bgmEnabled: check.bgmEnabled,
+      animate: check.animate,
+    });
+    updateStoryProject(projectId, { output_path: outputPath, status: "rendered" });
+    return { success: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    updateStoryProject(projectId, { status: "failed", error_message: message });
+    return { success: false, error: message };
+  }
+}
+
+export { checkStoryReadyToRender };

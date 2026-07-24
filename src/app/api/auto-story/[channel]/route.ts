@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getAutoStorySettings, setAutoStorySettings } from "@/lib/database";
-import { triggerAutoStoryOnce, type StoryChannel, type StoryFormat } from "@/services/personal/auto-story";
+import { triggerAutoStoryOnce, triggerAutoStoryBatch, type StoryChannel, type StoryFormat } from "@/services/personal/auto-story";
 
 export const runtime = "nodejs";
 export const maxDuration = 600;
@@ -44,6 +44,17 @@ export async function POST(request: Request, context: { params: Promise<{ channe
       const result = await triggerAutoStoryOnce(ch, format);
       if ("skipped" in result) return NextResponse.json({ success: false, error: result.skipped });
       return NextResponse.json({ success: true, projectId: result.projectId, message: `Idea Engine தொடங்கியது (Project #${result.projectId}) — Dashboard channel page-ல் status பாருங்கள்` });
+    }
+
+    if (body.triggerBatch === true) {
+      const format: StoryFormat = body.format === "short" ? "short" : "long";
+      const count = Number.isFinite(body.count) && body.count > 0 ? Math.min(Number(body.count), 20) : 10;
+      // Fire-and-forget — runs one at a time in the background (see
+      // triggerAutoStoryBatch), each drawing a fresh idea so all `count`
+      // videos are different themes. Progress shows up via story_projects
+      // status polling on the dashboard, same as everything else here.
+      triggerAutoStoryBatch(ch, format, count);
+      return NextResponse.json({ success: true, message: `${count} ${format === "short" ? "Shorts" : "videos"} queue தொடங்கியது — ஒவ்வொன்றாக generate ஆகும், Dashboard channel page-ல் status பாருங்கள்` });
     }
 
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });

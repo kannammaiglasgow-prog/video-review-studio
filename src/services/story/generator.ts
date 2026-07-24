@@ -182,19 +182,26 @@ Return ONLY JSON: {"ideas": [{"premise": "...", "category": "one of the categori
 export async function generateOriginalStoryFromPremise(premise: string, language: OutputLanguage = "ta", storyId?: number, durationSeconds = 180): Promise<string> {
   const targetChars = Math.round(durationSeconds * (charsPerSecondFor[language] || 12.5));
   const isShort = durationSeconds <= 75;
+  const hookInstructionEn = isShort
+    ? `The very FIRST LINE is the most important part — it must be a scroll-stopping hook: a shocking statement, an impossible-sounding claim, or a mid-action moment that creates an immediate curiosity gap. The viewer must NOT be able to predict what happens next from it. Do NOT start with scene-setting, introductions, or "it was a normal day" — start at the moment of maximum tension or right after the twist begins. Example hook style: "My sister-in-law smiled at my wedding — she didn't know I'd already read her diary." or "The DNA test results arrived three days after the funeral."`
+    : `The first two sentences must hook the viewer immediately — open with a striking statement, a question, or a moment of tension rather than slow scene-setting.`;
+  const hookInstructionTa = isShort
+    ? `**முதல் வாக்கியமே** மிக முக்கியமானது — scroll நிறுத்தும் ஒரு hook ஆக இருக்க வேண்டும்: ஒரு அதிர்ச்சிகரமான statement, நம்பமுடியாத ஒரு claim, அல்லது கதையின் நடுவே ஒரு உச்சகட்ட தருணத்தில் தொடங்க வேண்டும். இதை படிக்கும்போதே அடுத்து என்ன நடக்கும் என்று யூகிக்க முடியக்கூடாது. "ஒரு சாதாரண நாள்" போன்ற scene-setting-ல் தொடங்கக் கூடாது — உச்சகட்ட தருணத்திலேயே அல்லது திருப்பம் தொடங்கிய கணத்திலேயே தொடங்கவும். உதாரணம்: "என் திருமணத்தன்று மைத்துனி என்னைப் பார்த்து சிரித்தாள் — அவள் டைரியை நான் ஏற்கனவே படித்துவிட்டேன் என்று அவளுக்குத் தெரியாது." அல்லது "இறுதிச் சடங்கு முடிந்து மூன்று நாட்களில் DNA ரிசல்ட் வந்தது."`
+    : `முதல் இரண்டு வாக்கியங்களிலேயே பார்வையாளரை hook செய்ய வேண்டும் — மெதுவான scene-setting இல்லாமல், ஒரு தாக்கமான statement, கேள்வி, அல்லது ஒரு tension moment-ல் தொடங்கவும்.`;
+
   const prompt = language === "en"
     ? `You are a viral YouTube story-channel writer. Below is an ABSTRACT SITUATION/EMOTIONAL PREMISE only — not a real story, and it contains no names or specific details to reuse. Treat it purely as a theme spark.
 
 Premise (theme only): "${premise}"
 
-Write a COMPLETELY ORIGINAL, fictional short-story narration in ENGLISH inspired by the emotional core of this premise. Invent entirely new characters, setting, and a fresh plot with its own twist — do not reference the premise's wording directly. This will be read by Text-to-Speech for a YouTube ${isShort ? "Shorts (vertical, under a minute)" : "story"} video: a clear emotional hook in the first ${isShort ? "sentence" : "two sentences"}, rising conflict, and a satisfying twist/resolution ending. No emoji, hashtags, or markdown — plain prose, natural TTS-friendly sentences. Length: exactly about ${targetChars} characters (~${durationSeconds}s of narration)${isShort ? " — punchy and fast-paced, no room for filler" : ""}.
+Write a COMPLETELY ORIGINAL, fictional short-story narration in ENGLISH inspired by the emotional core of this premise. Invent entirely new characters, setting, and a fresh plot with its own twist — do not reference the premise's wording directly. This will be read by Text-to-Speech for a YouTube ${isShort ? "Shorts (vertical, under a minute)" : "story"} video. ${hookInstructionEn} After the hook: rising conflict, and a satisfying twist/resolution ending. No emoji, hashtags, or markdown — plain prose, natural TTS-friendly sentences. Length: exactly about ${targetChars} characters (~${durationSeconds}s of narration)${isShort ? " — punchy and fast-paced, no room for filler" : ""}.
 
 Return ONLY JSON (escape newlines inside strings as \\n): {"story": "..."}`
     : `நீங்கள் ஒரு வைரல் YouTube கதைத் தொகுப்பாளர். கீழே ஒரு **சுருக்கமான உணர்வு/சூழல் கருப்பொருள்** மட்டும் கொடுக்கப்பட்டுள்ளது — இது ஒரு உண்மையான கதை இல்லை, மறு-பயன்பாட்டுக்கான பெயர்கள்/விவரங்கள் இதில் இல்லை. இதை ஒரு தீம்-ஸ்பார்க் ஆக மட்டும் பயன்படுத்தவும்.
 
 கருப்பொருள் (theme மட்டும்): "${premise}"
 
-இந்த உணர்வுக் கருப்பொருளை மையமாக வைத்து, **முற்றிலும் புதிய, கற்பனையான** தமிழ் narration script எழுதுங்கள். புதிய பாத்திரங்கள், இடம், மற்றும் புதிய திருப்பம் கொண்ட கதையை உருவாக்குங்கள் — கருப்பொருளின் சொற்களை நேரடியாக பயன்படுத்த வேண்டாம். இது Text-to-Speech மூலம் படிக்கப்படும் YouTube ${isShort ? "Shorts (vertical, ஒரு நிமிடத்திற்குள்)" : "கதை"} வீடியோவுக்கானது: முதல் ${isShort ? "வாக்கியத்திலேயே" : "இரண்டு வாக்கியங்களில்"} தெளிவான உணர்வுபூர்வ hook, ஏறிவரும் மோதல், திருப்திகரமான திருப்பம்/முடிவு. Emoji, hashtags, markdown வேண்டாம் — இயல்பான பேச்சு வாக்கியங்கள் மட்டும். நீளம்: சரியாக சுமார் ${targetChars} எழுத்துகள் (${durationSeconds} விநாடி narration)${isShort ? " — வேகமான, சுருக்கமான கதை, unnecessary details வேண்டாம்" : ""}.
+இந்த உணர்வுக் கருப்பொருளை மையமாக வைத்து, **முற்றிலும் புதிய, கற்பனையான** தமிழ் narration script எழுதுங்கள். புதிய பாத்திரங்கள், இடம், மற்றும் புதிய திருப்பம் கொண்ட கதையை உருவாக்குங்கள் — கருப்பொருளின் சொற்களை நேரடியாக பயன்படுத்த வேண்டாம். இது Text-to-Speech மூலம் படிக்கப்படும் YouTube ${isShort ? "Shorts (vertical, ஒரு நிமிடத்திற்குள்)" : "கதை"} வீடியோவுக்கானது. ${hookInstructionTa} Hook-க்குப் பிறகு: ஏறிவரும் மோதல், திருப்திகரமான திருப்பம்/முடிவு. Emoji, hashtags, markdown வேண்டாம் — இயல்பான பேச்சு வாக்கியங்கள் மட்டும். நீளம்: சரியாக சுமார் ${targetChars} எழுத்துகள் (${durationSeconds} விநாடி narration)${isShort ? " — வேகமான, சுருக்கமான கதை, unnecessary details வேண்டாம்" : ""}.
 
 JSON மட்டும் தாருங்கள் (newlines-ஐ \\n ஆக escape செய்யவும்): {"story": "..."}`;
 
