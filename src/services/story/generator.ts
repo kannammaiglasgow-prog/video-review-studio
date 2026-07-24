@@ -146,22 +146,41 @@ ${storyInput}
   return script;
 }
 
-const IDEA_CATEGORIES = ["betrayal", "inheritance", "revenge", "family secrets", "mistaken identity", "crime/mystery", "rich vs poor", "sacrifice", "workplace conflict", "village/community dispute"];
+export type IdeaGenre = "drama" | "devotional";
 
-// Idea Engine step 1: Gemini invents a batch of brand-new one-line story
-// premises itself (no external source at all — Reddit's public API is blocked
-// and their official API's "Responsible Builder Policy" restricts exactly this
-// AI-content-generation use case). Each premise is just an abstract situation,
-// e.g. "A daughter discovers her late father's second family the day of his
-// funeral" — no names, no specific setting, so the actual story (step 2, see
-// generateOriginalStoryFromPremise) invents all of that fresh.
-export async function generateIdeaBatch(count = 20): Promise<{ premise: string; category: string }[]> {
-  const prompt = `You are a viral short-drama story editor. Invent ${count} completely original, one-line STORY PREMISES for a YouTube story-reading channel (relationship drama / revenge / family / mystery genre).
+const IDEA_CATEGORIES: Record<IdeaGenre, string[]> = {
+  drama: ["betrayal", "inheritance", "revenge", "family secrets", "mistaken identity", "crime/mystery", "rich vs poor", "sacrifice", "workplace conflict", "village/community dispute"],
+  devotional: ["deity legend/lore", "temple history/mahima", "festival significance", "moral parable", "saint/bhakta life story", "bhakti philosophy", "ritual meaning", "nature & spirituality", "answered prayer/miracle story", "guru teaching"],
+};
+
+// Idea Engine step 1: Gemini invents a batch of brand-new one-line premises
+// itself (no external source at all — Reddit's public API is blocked and
+// their official API's "Responsible Builder Policy" restricts exactly this
+// AI-content-generation use case). Each premise is just an abstract situation
+// or theme spark, e.g. "A daughter discovers her late father's second family
+// the day of his funeral" (drama) or "The hidden meaning behind why Shiva
+// wears a crescent moon" (devotional) — no names/specifics beyond the theme,
+// so the actual content (step 2, see generateOriginalStoryFromPremise /
+// generateDevotionalScriptFromPremise) invents or researches the rest.
+export async function generateIdeaBatch(count = 20, genre: IdeaGenre = "drama"): Promise<{ premise: string; category: string }[]> {
+  const categories = IDEA_CATEGORIES[genre];
+  const prompt = genre === "devotional"
+    ? `You are a Tamil devotional (Sanatana Hindu) content editor. Invent ${count} completely original, one-line CONTENT PREMISES for a Tamil devotional YouTube channel (Shiva, Murugan, Amman, Vishnu/Krishna, Lakshmi, Durga, Hanuman, Sai Baba, and other Hindu deities/saints).
+
+Each premise must be:
+- A short, specific TOPIC SPARK only (one sentence, under 20 words) — a theme to explore, not a full script.
+- Reverent and spiritually meaningful — never comedic, never disrespectful, no invented "facts" presented as scripture (frame legends/stories as traditional lore, not literal historical claims).
+- Genuinely different from the others — spread across varied categories: ${categories.join(", ")}.
+
+Example premise: "Why Lord Murugan's Vel represents the destruction of ignorance, not violence."
+
+Return ONLY JSON: {"ideas": [{"premise": "...", "category": "one of the categories above"}, ...]} — exactly ${count} entries.`
+    : `You are a viral short-drama story editor. Invent ${count} completely original, one-line STORY PREMISES for a YouTube story-reading channel (relationship drama / revenge / family / mystery genre).
 
 Each premise must be:
 - A short, abstract SITUATION only (one sentence, under 20 words) — NOT a full story, no character names, no specific place names.
 - Emotionally charged with a clear conflict or twist potential.
-- Genuinely different from the others — spread across varied categories: ${IDEA_CATEGORIES.join(", ")}.
+- Genuinely different from the others — spread across varied categories: ${categories.join(", ")}.
 
 Example premise: "A woman finds her wedding ring in her husband's coworker's desk drawer."
 
@@ -210,6 +229,34 @@ JSON மட்டும் தாருங்கள் (newlines-ஐ \\n ஆக 
   const story = typeof data.story === "string" ? data.story.trim() : "";
   if (!story) throw new Error("Gemini original story உருவாக்கவில்லை");
   return story;
+}
+
+// Devotional counterpart of generateOriginalStoryFromPremise — same "premise is
+// just a theme spark" contract, but reverent/explanatory tone instead of a
+// dramatic twist-story, and Tamil-only (Sivan Arul is a Tamil channel). Used
+// by the Idea Engine automation for the "devotional" genre.
+export async function generateDevotionalScriptFromPremise(premise: string, storyId?: number, durationSeconds = 180): Promise<string> {
+  const targetChars = Math.round(durationSeconds * (charsPerSecondFor.ta || 12.5));
+  const isShort = durationSeconds <= 75;
+  const prompt = `நீங்கள் ஒரு பக்தி (Sanatana Hindu devotional) YouTube சேனலுக்கான content எழுத்தாளர். கீழே ஒரு **தலைப்பு spark** மட்டும் கொடுக்கப்பட்டுள்ளது — இதை மையமாக வைத்து ஒரு முழுமையான தமிழ் பக்தி narration script எழுதுங்கள்.
+
+தலைப்பு: "${premise}"
+
+வழிமுறைகள்:
+- தொனி: அமைதியான, மரியாதையான, பக்தி உணர்வு நிறைந்த குரலில் இருக்க வேண்டும் — நகைச்சுவை, கேலி, அல்லது அவமரியாதை கூடாது.
+- புராண/வழக்கு கதைகளை "பாரம்பரிய நம்பிக்கை/புராணம்" எனக் குறிப்பிட்டு சொல்லுங்கள் — உண்மையான வரலாற்று உண்மை எனக் கூற வேண்டாம்.
+- ${isShort ? "**முதல் வாக்கியமே** கேட்பவரை உள்ளே இழுக்கும் ஒரு வலுவான, ஆர்வமூட்டும் கேள்வி அல்லது statement-ஆக இருக்க வேண்டும் (எ.கா. \"சிவபெருமான் ஏன் பிறை நிலவை தலையில் அணிந்திருக்கிறார் தெரியுமா?\") — மெதுவான அறிமுகம் வேண்டாம், நேரடியாக தலைப்புக்குள் நுழையவும்." : "முதல் இரண்டு வாக்கியங்களிலேயே ஒரு ஆர்வமூட்டும் கேள்வி அல்லது வலுவான அறிமுகத்துடன் தொடங்கவும்."}
+- இதை Text-to-Speech மூலம் படிக்கப்படும் ${isShort ? "YouTube Shorts (ஒரு நிமிடத்திற்குள்)" : "பக்தி வீடியோ"}வுக்கானது — இயல்பான பேச்சு வாக்கியங்கள் மட்டும், Emoji/hashtags/markdown வேண்டாம், எண்களோ ஆங்கில எழுத்துக்களோ கூடாது.
+- முடிவில் ஒரு சிறிய ஆன்மீக செய்தி அல்லது பிரார்த்தனை வரியுடன் நிறைவு செய்யவும்.
+- நீளம்: சரியாக சுமார் ${targetChars} எழுத்துகள் (${durationSeconds} விநாடி narration).
+
+JSON மட்டும் தாருங்கள் (newlines-ஐ \\n ஆக escape செய்யவும்): {"script": "..."}`;
+
+  const raw = await geminiText(prompt, 0.8, storyId ? { storyId, step: "auto_idea" } : undefined);
+  const data = parseJson<{ script?: string }>(raw);
+  const script = typeof data.script === "string" ? data.script.trim() : "";
+  if (!script) throw new Error("Gemini devotional script உருவாக்கவில்லை");
+  return script;
 }
 
 export type StoryScenePrompt = { prompt: string; seconds: number; narrationExcerpt: string; searchTerms: string[] };

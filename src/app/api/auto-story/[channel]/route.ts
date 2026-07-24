@@ -7,7 +7,7 @@ export const maxDuration = 600;
 export const dynamic = "force-dynamic";
 
 function parseChannel(channel: string): StoryChannel | null {
-  return channel === "story" || channel === "english" ? channel : null;
+  return channel === "story" || channel === "english" || channel === "devotional" ? channel : null;
 }
 
 export async function GET(request: Request, context: { params: Promise<{ channel: string }> }) {

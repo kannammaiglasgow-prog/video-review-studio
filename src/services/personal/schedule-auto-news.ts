@@ -4,8 +4,8 @@ import { getAutoStorySettings, runAutoStoryPipeline, type StoryChannel } from ".
 let lastNewsRunKey = "";
 let shortsSlotIndex = 0;
 let lastShortsRunKey = "";
-const lastStoryRunKey: Record<StoryChannel, string> = { story: "", english: "" };
-const lastStoryShortsRunKey: Record<StoryChannel, string> = { story: "", english: "" };
+const lastStoryRunKey: Record<StoryChannel, string> = { story: "", english: "", devotional: "" };
+const lastStoryShortsRunKey: Record<StoryChannel, string> = { story: "", english: "", devotional: "" };
 let storyRunInProgress = false;
 
 function pad(n: number) { return n.toString().padStart(2, "0"); }
@@ -45,7 +45,7 @@ function checkAndRun() {
   // Runs are heavy (script + TTS + render, several minutes each) so long-form
   // and Shorts are serialized one-at-a-time (shared flag) rather than overlapped
   // if multiple channels/formats' times coincide.
-  for (const channel of ["story", "english"] as StoryChannel[]) {
+  for (const channel of ["story", "english", "devotional"] as StoryChannel[]) {
     const runKey = `${dateKey}-${hhmm}`;
     const settings = getAutoStorySettings(channel);
 

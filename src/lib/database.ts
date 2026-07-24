@@ -378,6 +378,16 @@ function migrate(db: DatabaseSync) {
     db.exec(`ALTER TABLE auto_story_settings ADD COLUMN shorts_times TEXT NOT NULL DEFAULT '["09:00","10:30","12:00","13:30","15:00","16:30","18:00","19:30","21:00","22:30"]'`);
   }
   db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (28, 'auto_story_shorts')");
+
+  // Extends the Idea Engine to the Sivan Arul (Devotional) channel — a separate
+  // idea pool "genre" so devotional premises (deity stories, temple history,
+  // spiritual teachings) never mix with the drama-channel pool (revenge,
+  // betrayal, etc.) when picking a fresh idea.
+  if (!hasCol("story_idea_pool", "genre")) {
+    db.exec(`ALTER TABLE story_idea_pool ADD COLUMN genre TEXT NOT NULL DEFAULT 'drama'`);
+  }
+  db.exec("INSERT OR IGNORE INTO auto_story_settings (channel, enabled, times, shorts_times) VALUES ('devotional', 0, '[\"08:30\",\"18:30\"]', '[\"09:00\",\"10:30\",\"12:00\",\"13:30\",\"15:00\",\"16:30\",\"18:00\",\"19:30\",\"21:00\",\"22:30\"]')");
+  db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (29, 'auto_story_devotional_genre')");
 }
 
 export function database() {
@@ -632,27 +642,31 @@ export function setAutoStorySettings(channel: string, update: Partial<AutoStoryS
 
 // ── Story idea pool (Gemini self-generated premises, no external scraping) ──
 
+export type IdeaGenre = "drama" | "devotional";
 export type StoryIdea = { id: number; premise: string; category: string | null };
 
-/** One random unused premise, or null if the pool needs refilling. Shared
- * globally (not per-channel) so Tamil Story and English Stories never both
- * dramatize the exact same premise in two languages. */
-export function getUnusedIdea(): StoryIdea | undefined {
+/** One random unused premise for the given genre, or undefined if that genre's
+ * pool needs refilling. Shared across all channels of the same genre (not
+ * per-channel) so e.g. Tamil Story and English Stories never both dramatize
+ * the exact same premise in two languages — but drama and devotional pools
+ * are kept fully separate since a "revenge story" premise would never suit a
+ * devotional video. */
+export function getUnusedIdea(genre: IdeaGenre = "drama"): StoryIdea | undefined {
   const db = database();
-  return db.prepare("SELECT id, premise, category FROM story_idea_pool WHERE used = 0 ORDER BY RANDOM() LIMIT 1").get() as StoryIdea | undefined;
+  return db.prepare("SELECT id, premise, category FROM story_idea_pool WHERE used = 0 AND genre = ? ORDER BY RANDOM() LIMIT 1").get(genre) as StoryIdea | undefined;
 }
 
-export function countUnusedIdeas(): number {
+export function countUnusedIdeas(genre: IdeaGenre = "drama"): number {
   const db = database();
-  const row = db.prepare("SELECT COUNT(*) AS c FROM story_idea_pool WHERE used = 0").get() as { c: number };
+  const row = db.prepare("SELECT COUNT(*) AS c FROM story_idea_pool WHERE used = 0 AND genre = ?").get(genre) as { c: number };
   return row.c;
 }
 
 /** Adds new premises to the pool, silently skipping any exact duplicate text. */
-export function addIdeasToPool(ideas: { premise: string; category?: string }[]): void {
+export function addIdeasToPool(ideas: { premise: string; category?: string }[], genre: IdeaGenre = "drama"): void {
   const db = database();
-  const insert = db.prepare("INSERT OR IGNORE INTO story_idea_pool (premise, category) VALUES (?, ?)");
-  for (const idea of ideas) insert.run(idea.premise, idea.category || null);
+  const insert = db.prepare("INSERT OR IGNORE INTO story_idea_pool (premise, category, genre) VALUES (?, ?, ?)");
+  for (const idea of ideas) insert.run(idea.premise, idea.category || null, genre);
 }
 
 export function markIdeaPoolUsed(id: number): void {
