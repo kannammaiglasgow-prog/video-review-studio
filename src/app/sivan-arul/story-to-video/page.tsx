@@ -121,7 +121,38 @@ export default function StoryToVideoPage() {
   const [fbUploading, setFbUploading] = useState(false);
   const [imageAnalyzing, setImageAnalyzing] = useState(false);
   const [pastedImagePreview, setPastedImagePreview] = useState<string | null>(null);
+  const [linkUrl, setLinkUrl] = useState("");
+  const [linkExtracting, setLinkExtracting] = useState(false);
   const fileInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
+
+  // Paste a news article's URL — server fetches the page and Gemini pulls out
+  // just the headline + body (ignoring nav/ads/comments), same as pasting the
+  // text directly into the story box.
+  const extractFromLink = async () => {
+    const url = linkUrl.trim();
+    if (!url) return;
+    setLinkExtracting(true);
+    setMessage("");
+    try {
+      const res = await fetch("/api/sivan-arul/story-to-video/extract-link", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setStory((prev) => (prev.trim() ? `${prev.trim()}\n\n${data.story}` : data.story));
+        setMessage("✅ Link-ல் இருந்து article எடுக்கப்பட்டு story box-ல் சேர்க்கப்பட்டது.");
+        setLinkUrl("");
+      } else {
+        setMessage(`❌ ${data.error}`);
+      }
+    } catch {
+      setMessage("❌ Link fetch தோல்வி — மீண்டும் முயற்சிக்கவும்");
+    } finally {
+      setLinkExtracting(false);
+    }
+  };
 
   // Paste an image directly into the story textarea (Ctrl+V) — Gemini vision
   // looks at it and writes a story-starter description, inserted into the box.
@@ -542,6 +573,21 @@ export default function StoryToVideoPage() {
 
         {!projectId && (
           <div style={box}>
+            <label style={label}>🔗 News link-ல் இருந்து கதை எடு (optional)</label>
+            <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+              <input
+                type="url"
+                value={linkUrl}
+                onChange={(e) => setLinkUrl(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); extractFromLink(); } }}
+                placeholder="https://... (ஒரு news article-ன் link-ஐ paste செய்யவும்)"
+                style={{ ...input, flex: 1 }}
+              />
+              <button onClick={extractFromLink} disabled={linkExtracting || !linkUrl.trim()} style={linkExtracting || !linkUrl.trim() ? btnDisabled : btn}>
+                {linkExtracting ? "⏳ எடுக்கிறது..." : "📥 Fetch"}
+              </button>
+            </div>
+
             <label style={label}>கதை / செய்தி (Story / News)</label>
             <textarea
               value={story}
@@ -665,6 +711,22 @@ export default function StoryToVideoPage() {
                 <strong>Project #{project.id}</strong>
                 <span>{statusLabelFor(project.status, project.mediaSource)}</span>
               </div>
+              {project.status === "fetching_media" && project.scenes.length > 0 && (() => {
+                const done = project.uploadedImages.filter(Boolean).length;
+                const total = project.scenes.length;
+                const pct = Math.round((done / total) * 100);
+                return (
+                  <div style={{ marginTop: 10 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#a0a0c0", marginBottom: 4 }}>
+                      <span>{project.mediaSource === "ai" ? "🎨 AI image generate ஆகிறது" : "🎬 Stock media fetch ஆகிறது"} — {done} / {total} scenes தயார்</span>
+                      <span>{pct}%</span>
+                    </div>
+                    <div style={{ width: "100%", height: 10, background: "#2a2a44", borderRadius: 6, overflow: "hidden" }}>
+                      <div style={{ width: `${pct}%`, height: "100%", background: "linear-gradient(90deg, #7c5cff, #22c55e)", transition: "width 0.6s ease" }} />
+                    </div>
+                  </div>
+                );
+              })()}
               {project.errorMessage && <div style={{ color: "#ff8080", marginTop: 8, fontSize: 13 }}>{project.errorMessage}</div>}
             </div>
 

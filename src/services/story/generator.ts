@@ -12,7 +12,7 @@ function key() {
 
 type CostCtx = { storyId: number; step: string };
 
-async function geminiText(prompt: string, temperature = 0.7, cost?: CostCtx): Promise<string> {
+export async function geminiText(prompt: string, temperature = 0.7, cost?: CostCtx): Promise<string> {
   const response = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent", {
     method: "POST",
     headers: { "Content-Type": "application/json", "x-goog-api-key": key() },
@@ -45,7 +45,7 @@ async function geminiText(prompt: string, temperature = 0.7, cost?: CostCtx): Pr
   return text;
 }
 
-function parseJson<T>(raw: string): T {
+export function parseJson<T>(raw: string): T {
   let text = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
   return JSON.parse(text) as T;
 }
