@@ -97,16 +97,17 @@ export async function runStoryGenerationPipeline(projectId: number, params: Stor
             rescaledScenes[i].searchTerms?.length ? rescaledScenes[i].searchTerms : [rescaledScenes[i].narrationExcerpt || rescaledScenes[i].prompt].filter(Boolean),
           );
           const { files: stockFiles } = await downloadScenedStockMedia(sceneSearchTerms, orientation, mediaDir);
-          if (stockFiles.length === stillMissing.length) {
-            for (let j = 0; j < stillMissing.length; j += 1) {
-              const sceneIndex = stillMissing[j];
-              const ext = path.extname(stockFiles[j]);
-              const target = path.join(mediaDir, `scene_${sceneIndex}${ext}`);
-              await fsp.rename(stockFiles[j], target).catch(() => {});
-              files[sceneIndex] = target;
-            }
-            stillMissing = [];
+          const recoveredIndices: number[] = [];
+          for (let j = 0; j < stillMissing.length; j += 1) {
+            if (!stockFiles[j]) continue;
+            const sceneIndex = stillMissing[j];
+            const ext = path.extname(stockFiles[j]!);
+            const target = path.join(mediaDir, `scene_${sceneIndex}${ext}`);
+            await fsp.rename(stockFiles[j]!, target).catch(() => {});
+            files[sceneIndex] = target;
+            recoveredIndices.push(sceneIndex);
           }
+          stillMissing = stillMissing.filter((i) => !recoveredIndices.includes(i));
         }
 
         const gotAll = files.length > 0 && files.every((f) => f !== null) && stillMissing.length === 0;
@@ -122,13 +123,27 @@ export async function runStoryGenerationPipeline(projectId: number, params: Stor
         // downloadScenedStockMedia writes stock-<i>.<ext>; the render pipeline
         // expects scene_<i>.<ext>, so rename each into place (order = scene index).
         for (let i = 0; i < files.length; i++) {
-          const ext = path.extname(files[i]);
-          await fsp.rename(files[i], path.join(mediaDir, `scene_${i}${ext}`)).catch(() => {});
+          if (!files[i]) continue;
+          const ext = path.extname(files[i]!);
+          await fsp.rename(files[i]!, path.join(mediaDir, `scene_${i}${ext}`)).catch(() => {});
         }
-        const gotAll = files.length > 0 && files.length === rescaledScenes.length;
+        let stillMissing = files.map((f, i) => (f === null ? i : -1)).filter((i) => i >= 0);
+
+        // A scene's keywords found nothing on Pexels/Pixabay even after the
+        // 3 built-in fallback passes (rare — usually an exhausted generic
+        // pool on a long video) — generate a free AI image for just that
+        // scene instead of leaving it for manual upload.
+        if (stillMissing.length > 0) {
+          const scenePrompts = rescaledScenes.map((s) => s.prompt);
+          const { recovered } = await retryScenesWithVariantPrompts(stillMissing, scenePrompts, orientation, mediaDir);
+          const recoveredIndices = new Set(recovered.map((r) => r.index));
+          stillMissing = stillMissing.filter((i) => !recoveredIndices.has(i));
+        }
+
+        const gotAll = files.length > 0 && stillMissing.length === 0;
         updateStoryProject(projectId, {
           status: "script_ready",
-          error_message: gotAll ? null : "சில scenes-க்கு stock media கிடைக்கவில்லை — keywords-ஐ மாற்றவும், அல்லது கீழே manual-ஆக upload செய்யவும்",
+          error_message: gotAll ? null : "சில scenes-க்கு media கிடைக்கவில்லை — கீழே manual-ஆக upload செய்யவும்",
         });
       }
     } catch (mediaError) {

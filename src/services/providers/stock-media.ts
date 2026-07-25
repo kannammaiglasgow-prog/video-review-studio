@@ -328,18 +328,20 @@ export async function downloadScenedStockMedia(sceneSearchTerms: string[][], ori
     }
   }
 
-  if (files.some((file) => !file)) {
-    await fs.rm(staging, { recursive: true, force: true });
-    return { files: [] as string[], assets: [...assetPool.values()] };
-  }
+  // Keep whatever succeeded rather than discarding the whole batch when one
+  // scene's search comes up empty — the caller decides how to fill the gap
+  // (retry with different terms, AI-image fallback, or manual upload), and
+  // scenes that DID find a clip shouldn't need to be re-fetched over that.
   for (const file of await fs.readdir(directory)) {
     if (/^stock-\d+\.(mp4|jpe?g|png|webp)$/i.test(file)) await fs.rm(path.join(directory, file), { force: true });
   }
-  const finalFiles: string[] = [];
-  for (const stagedFile of files) {
-    const output = path.join(directory, path.basename(stagedFile as string));
-    await fs.rename(stagedFile as string, output);
-    finalFiles.push(output);
+  const finalFiles: (string | null)[] = new Array(sceneCount).fill(null);
+  for (let index = 0; index < sceneCount; index += 1) {
+    const staged = files[index];
+    if (!staged) continue;
+    const output = path.join(directory, path.basename(staged));
+    await fs.rename(staged, output);
+    finalFiles[index] = output;
   }
   await fs.rm(staging, { recursive: true, force: true });
   return { files: finalFiles, assets: [...assetPool.values()] };

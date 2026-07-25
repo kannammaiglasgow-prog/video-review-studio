@@ -517,7 +517,7 @@ export async function rerenderProject(projectId: number) {
     const savedScenes = Array.isArray(payload.sceneSearchTerms) ? payload.sceneSearchTerms : [];
     const sceneSearchTerms = savedScenes.length ? alignSceneCount(savedScenes, requiredClips) : Array.from({ length: requiredClips }, () => [payload.title || "people lifestyle", "technology", "city", "nature"]);
     const { files } = await downloadScenedStockMedia(sceneSearchTerms, project.aspect_ratio === "9:16" ? "portrait" : "landscape", path.join(config.mediaRoot, String(projectId), "stock"));
-    clipPaths = files;
+    clipPaths = files.filter((file): file is string => file !== null);
   }
   if (clipPaths.length < requiredClips) throw new Error(`${requiredClips} தனித்தனி clips தேவை; ${clipPaths.length} மட்டும் கிடைத்தது`);
   db.prepare("UPDATE projects SET status='render',updated_at=CURRENT_TIMESTAMP WHERE id=?").run(projectId);
