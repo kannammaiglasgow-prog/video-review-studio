@@ -13,8 +13,13 @@ const POLLINATIONS_BASE = "https://image.pollinations.ai/prompt";
 // after just a couple). Scenes are generated one at a time with a pause
 // between them, and a 429 is retried with backoff rather than treated as a
 // hard failure.
-const REQUEST_GAP_MS = 6_000;
+const REQUEST_GAP_MS = 8_000;
 const MAX_RETRIES = 3;
+// After the main pass, any scene that still failed gets one more try after this
+// cooldown — by then the rate-limit window from the whole video's requests has
+// usually cleared, so a scene that failed early (before the limiter reset)
+// often succeeds on this final sweep instead of being left for manual upload.
+const FINAL_SWEEP_COOLDOWN_MS = 25_000;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -57,8 +62,7 @@ export async function downloadScenedAIMedia(scenePrompts: string[], orientation:
   await fs.mkdir(directory, { recursive: true });
   const files: (string | null)[] = new Array(scenePrompts.length).fill(null);
 
-  for (let index = 0; index < scenePrompts.length; index += 1) {
-    if (index > 0) await sleep(REQUEST_GAP_MS);
+  const tryScene = async (index: number) => {
     const prompt = scenePrompts[index]?.trim() || "cinematic symbolic scene, atmospheric lighting";
     // Fixed-but-varied seed per scene so a retry (empty pool refill etc.) is
     // reproducible-ish while still giving each scene a distinct composition.
@@ -69,10 +73,76 @@ export async function downloadScenedAIMedia(scenePrompts: string[], orientation:
       const filePath = path.join(directory, `scene_${index}${imageExtension(type)}`);
       await fs.writeFile(filePath, data);
       files[index] = filePath;
+      return true;
     } catch (err) {
       console.error(`[Pollinations] scene ${index} image generation failed:`, err instanceof Error ? err.message : err);
+      return false;
+    }
+  };
+
+  for (let index = 0; index < scenePrompts.length; index += 1) {
+    if (index > 0) await sleep(REQUEST_GAP_MS);
+    await tryScene(index);
+  }
+
+  // Final sweep: a scene that failed early in the main pass (e.g. leftover
+  // rate-limit pressure from a previous video) often succeeds once the
+  // limiter has had time to reset — worth one more try before giving up and
+  // asking for a manual upload.
+  const stillMissing = files.map((f, i) => (f === null ? i : -1)).filter((i) => i >= 0);
+  if (stillMissing.length > 0) {
+    console.log(`[Pollinations] ${stillMissing.length} scene(s) missing after main pass, retrying after ${FINAL_SWEEP_COOLDOWN_MS / 1000}s cooldown`);
+    await sleep(FINAL_SWEEP_COOLDOWN_MS);
+    for (const index of stillMissing) {
+      await tryScene(index);
+      await sleep(REQUEST_GAP_MS);
     }
   }
 
   return { files };
+}
+
+/** A prompt Pollinations keeps failing/429-ing on sometimes succeeds once
+ * reworded — each variant is progressively shorter/more generic so the last
+ * attempt is nearly guaranteed to render something (if far less specific). */
+function promptVariants(original: string): string[] {
+  const short = original.split(",").slice(0, 2).join(",").trim() || original;
+  return [
+    `${original}, alternate composition, different framing`,
+    `${short}, minimalist symbolic illustration, soft lighting`,
+    "cinematic atmospheric scene, symbolic art, soft dramatic lighting",
+  ];
+}
+
+/** For scenes still missing after downloadScenedAIMedia's own main pass +
+ * final sweep, try up to 3 more times each with a reworded prompt (see
+ * promptVariants) before the caller gives up on AI generation for that scene
+ * and falls back to stock media. Writes scene_<i> files in place, same as
+ * downloadScenedAIMedia. */
+export async function retryScenesWithVariantPrompts(
+  missingIndices: number[],
+  scenePrompts: string[],
+  orientation: "portrait" | "landscape",
+  directory: string,
+): Promise<{ recovered: { index: number; path: string }[] }> {
+  const recovered: { index: number; path: string }[] = [];
+  for (const index of missingIndices) {
+    const original = scenePrompts[index]?.trim() || "cinematic symbolic scene, atmospheric lighting";
+    const variants = promptVariants(original);
+    for (let v = 0; v < variants.length; v += 1) {
+      await sleep(REQUEST_GAP_MS);
+      try {
+        const seed = 5000 + index * 100 + v;
+        const data = await generateOneImage(variants[v], orientation, seed);
+        const type = detectImageType(data)!;
+        const filePath = path.join(directory, `scene_${index}${imageExtension(type)}`);
+        await fs.writeFile(filePath, data);
+        recovered.push({ index, path: filePath });
+        break;
+      } catch (err) {
+        console.error(`[Pollinations] scene ${index} variant ${v + 1}/${variants.length} failed:`, err instanceof Error ? err.message : err);
+      }
+    }
+  }
+  return { recovered };
 }

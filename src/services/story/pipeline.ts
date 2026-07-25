@@ -9,7 +9,7 @@ import { edgeSpeechProvider } from "@/services/providers/edge-tts";
 import { probeAudioDuration } from "@/services/render/ffprobe";
 import { expandScriptForDuration, generateSceneBreakdown } from "@/services/story/generator";
 import { downloadScenedStockMedia } from "@/services/providers/stock-media";
-import { downloadScenedAIMedia } from "@/services/providers/pollinations";
+import { downloadScenedAIMedia, retryScenesWithVariantPrompts } from "@/services/providers/pollinations";
 import { renderVideo, type SceneClip } from "@/services/render/ffmpeg";
 
 export type StoryPipelineParams = {
@@ -76,7 +76,40 @@ export async function runStoryGenerationPipeline(projectId: number, params: Stor
       if (mediaSource === "ai") {
         const scenePrompts = rescaledScenes.map((s) => s.prompt);
         const { files } = await downloadScenedAIMedia(scenePrompts, orientation, mediaDir);
-        const gotAll = files.length > 0 && files.every((f) => f !== null);
+        let stillMissing = files.map((f, i) => (f === null ? i : -1)).filter((i) => i >= 0);
+
+        // Scene still failed after the main pass + its own final sweep — try
+        // the same scene a few more times with a reworded prompt (same free
+        // Pollinations endpoint, just less likely to be the exact request
+        // that keeps hitting the rate limit / erroring).
+        if (stillMissing.length > 0) {
+          const { recovered } = await retryScenesWithVariantPrompts(stillMissing, scenePrompts, orientation, mediaDir);
+          for (const { index, path: recoveredPath } of recovered) files[index] = recoveredPath;
+          const recoveredIndices = new Set(recovered.map((r) => r.index));
+          stillMissing = stillMissing.filter((i) => !recoveredIndices.has(i));
+        }
+
+        // Still nothing after 3 reworded AI attempts — fall back to
+        // copyright-free stock media (Pexels/Pixabay) for just those scenes
+        // rather than leaving the video with a manual-upload gap.
+        if (stillMissing.length > 0) {
+          const sceneSearchTerms = stillMissing.map((i) =>
+            rescaledScenes[i].searchTerms?.length ? rescaledScenes[i].searchTerms : [rescaledScenes[i].narrationExcerpt || rescaledScenes[i].prompt].filter(Boolean),
+          );
+          const { files: stockFiles } = await downloadScenedStockMedia(sceneSearchTerms, orientation, mediaDir);
+          if (stockFiles.length === stillMissing.length) {
+            for (let j = 0; j < stillMissing.length; j += 1) {
+              const sceneIndex = stillMissing[j];
+              const ext = path.extname(stockFiles[j]);
+              const target = path.join(mediaDir, `scene_${sceneIndex}${ext}`);
+              await fsp.rename(stockFiles[j], target).catch(() => {});
+              files[sceneIndex] = target;
+            }
+            stillMissing = [];
+          }
+        }
+
+        const gotAll = files.length > 0 && files.every((f) => f !== null) && stillMissing.length === 0;
         updateStoryProject(projectId, {
           status: "script_ready",
           error_message: gotAll ? null : "சில scenes-க்கு AI image generate ஆகவில்லை — கீழே manual-ஆக upload செய்யவும்",
