@@ -12,8 +12,9 @@ const POLLINATIONS_BASE = "https://image.pollinations.ai/prompt";
 // back-to-back requests for one video's scenes returns 429 Too Many Requests
 // after just a couple). Scenes are generated one at a time with a pause
 // between them, and a 429 is retried with backoff rather than treated as a
-// hard failure.
-const REQUEST_GAP_MS = 8_000;
+// hard failure. 5s (down from 8s) — recent live runs at 8s completed with no
+// 429s, so this trims total time while staying well above the failure zone.
+const REQUEST_GAP_MS = 5_000;
 const MAX_RETRIES = 3;
 // After the main pass, any scene that still failed gets one more try after this
 // cooldown — by then the rate-limit window from the whole video's requests has
