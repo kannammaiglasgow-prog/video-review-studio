@@ -49,7 +49,7 @@ export async function runStoryGenerationPipeline(projectId: number, params: Stor
     // time roughly 3x. Visually this is a normal held-image style, not a
     // quality compromise.
     const secondsPerScene = mediaSource === "ai" ? 18 : 6;
-    const scenes = await generateSceneBreakdown(script, durationSeconds, projectId, language, secondsPerScene, genre);
+    const scenes = await generateSceneBreakdown(script, durationSeconds, projectId, language, secondsPerScene, genre, mediaSource);
     updateStoryProject(projectId, { scenes_json: JSON.stringify(scenes), status: "generating_audio" });
 
     const audioPath = path.join(mediaDir, "narration.wav");

@@ -261,9 +261,16 @@ JSON மட்டும் தாருங்கள் (newlines-ஐ \\n ஆக 
 
 export type StoryScenePrompt = { prompt: string; seconds: number; narrationExcerpt: string; searchTerms: string[] };
 
-export async function generateSceneBreakdown(script: string, durationSeconds: number, storyId?: number, language: OutputLanguage = "ta", secondsPerScene = 6, genre: IdeaGenre = "drama"): Promise<StoryScenePrompt[]> {
+export async function generateSceneBreakdown(script: string, durationSeconds: number, storyId?: number, language: OutputLanguage = "ta", secondsPerScene = 6, genre: IdeaGenre = "drama", mediaSource: "stock" | "ai" = "stock"): Promise<StoryScenePrompt[]> {
   const langName = languageNames[language] || "Tamil";
   const sceneCount = Math.max(4, Math.min(40, Math.round(durationSeconds / secondsPerScene)));
+  // Free AI image generators (Pollinations/Flux) render photorealism poorly
+  // (distorted faces/anatomy, confirmed live) but render anime/Ghibli-style
+  // digital art far more reliably — same model, much better perceived
+  // quality — so AI-image projects ask for that style instead of photoreal.
+  const styleInstruction = mediaSource === "ai"
+    ? "Studio Ghibli-inspired anime/digital painting style, vibrant colors, expressive faces, painterly detail — NOT photorealistic"
+    : "cinematic, photorealistic அல்லது painterly";
   // Tamil-language and devotional content on this channel is South Indian
   // (Tamil Nadu) Hindu by default — without this, image models default to
   // generic/Western depictions for ambiguous English words in the prompt
@@ -284,7 +291,7 @@ export async function generateSceneBreakdown(script: string, durationSeconds: nu
     : "";
   const prompt = `கீழே உள்ள ${langName} narration script-ஐ காலவரிசைப்படி சரியாக ${sceneCount} காட்சிகளாக (scenes) பிரிக்கவும். ஒவ்வொரு காட்சிக்கும்:
 1. "narrationExcerpt": அந்த காட்சியின் போது பேசப்படும் script-ன் ${langName} பகுதி (சுருக்கமாக, exact text — same language as the script).
-2. "prompt": அந்த காட்சிக்கான ஒரு விரிவான English image-generation prompt (any AI image generator style — cinematic, photorealistic அல்லது painterly, 16:9, real நபர்களை குறிப்பிட்ட பெயரால் அடையாளப்படுத்தாமல் — silhouettes/symbolic/generic depiction பயன்படுத்தவும் இது ஒரு உண்மைக் கதையாக இருந்தால்). இது manual reference-க்காக மட்டும் — scene description ஆக காட்டப்படும்.
+2. "prompt": அந்த காட்சிக்கான ஒரு விரிவான English image-generation prompt (${styleInstruction}, 16:9, real நபர்களை குறிப்பிட்ட பெயரால் அடையாளப்படுத்தாமல் — silhouettes/symbolic/generic depiction பயன்படுத்தவும் இது ஒரு உண்மைக் கதையாக இருந்தால்). இது manual reference-க்காக மட்டும் — scene description ஆக காட்டப்படும்.
 3. "searchTerms": அந்த காட்சிக்கு பொருத்தமான 2-3 சுருக்கமான English stock-footage தேடல் சொற்கள் (Pexels/Pixabay-ல் தேட ஏற்றவை — எ.கா. "rural indian village sunset", "woman walking road"; ambiguous சொற்களை முழு video context வைத்து disambiguate செய்யவும்).${culturalGuardrail}
 
 Script:
