@@ -327,7 +327,7 @@ JSON மட்டும் தாருங்கள் (newlines-ஐ \\n ஆக 
 
 export type StoryScenePrompt = { prompt: string; seconds: number; narrationExcerpt: string; searchTerms: string[] };
 
-export async function generateSceneBreakdown(script: string, durationSeconds: number, storyId?: number, language: OutputLanguage = "ta", secondsPerScene = 6, genre: IdeaGenre = "drama", mediaSource: "stock" | "ai" = "stock"): Promise<StoryScenePrompt[]> {
+export async function generateSceneBreakdown(script: string, durationSeconds: number, storyId?: number, language: OutputLanguage = "ta", secondsPerScene = 6, genre: IdeaGenre = "drama", mediaSource: "stock" | "ai" | "nano-banana" = "stock"): Promise<StoryScenePrompt[]> {
   const langName = languageNames[language] || "Tamil";
   const sceneCount = Math.max(4, Math.min(40, Math.round(durationSeconds / secondsPerScene)));
   // Free AI image generators (Pollinations/Flux) render photorealism poorly

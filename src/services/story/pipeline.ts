@@ -10,6 +10,7 @@ import { probeAudioDuration } from "@/services/render/ffprobe";
 import { expandScriptForDuration, generateSceneBreakdown, type IdeaGenre } from "@/services/story/generator";
 import { downloadScenedStockMedia } from "@/services/providers/stock-media";
 import { downloadScenedAIMedia, retryScenesWithVariantPrompts } from "@/services/providers/pollinations";
+import { downloadScenedNanoBananaMedia } from "@/services/providers/nano-banana";
 import { renderVideo, type SceneClip } from "@/services/render/ffmpeg";
 
 export type StoryPipelineParams = {
@@ -21,9 +22,10 @@ export type StoryPipelineParams = {
   ttsMode: "free" | "paid";
   localize: boolean;
   mediaDir: string;
-  // "stock" = free Pexels/Pixabay footage (default, most reliable); "ai" = free
-  // Pollinations/Flux image generated per scene from its own detailed prompt.
-  mediaSource?: "stock" | "ai";
+  // "stock" = free Pexels/Pixabay footage (most reliable); "ai" = free
+  // Pollinations/Flux image per scene (rate-limited, medium quality); "nano-banana"
+  // = paid Gemini image model (~$0.039/image, high quality, no rate-limiting).
+  mediaSource?: "stock" | "ai" | "nano-banana";
   // Drives the scene-prompt cultural guardrail (South Indian Hindu authenticity
   // + consistent character wording) in generateSceneBreakdown — defaults to
   // "drama" (no extra guardrail beyond the Tamil-language default there).
@@ -47,8 +49,11 @@ export async function runStoryGenerationPipeline(projectId: number, params: Stor
     // scenes (~28s each via Ken Burns pan/zoom) instead of stock's 6s/scene —
     // a 3-minute video needs ~6-7 AI images instead of ~30, cutting generation
     // time further on top of the per-request pacing. Visually this is a
-    // normal held-image style, not a quality compromise.
-    const secondsPerScene = mediaSource === "ai" ? 28 : 6;
+    // normal held-image style, not a quality compromise. "nano-banana" is a
+    // paid, reliable API (no rate-limit pacing needed) but still costs
+    // ~$0.039/image, so 10s/scene keeps per-video spend reasonable while
+    // giving noticeably more visual variety than the free "ai" path.
+    const secondsPerScene = mediaSource === "ai" ? 28 : mediaSource === "nano-banana" ? 10 : 6;
     const scenes = await generateSceneBreakdown(script, durationSeconds, projectId, language, secondsPerScene, genre, mediaSource);
     updateStoryProject(projectId, { scenes_json: JSON.stringify(scenes), status: "generating_audio" });
 
@@ -118,6 +123,37 @@ export async function runStoryGenerationPipeline(projectId: number, params: Stor
         updateStoryProject(projectId, {
           status: "script_ready",
           error_message: gotAll ? null : "சில scenes-க்கு AI image generate ஆகவில்லை — கீழே manual-ஆக upload செய்யவும்",
+        });
+      } else if (mediaSource === "nano-banana") {
+        const scenePrompts = rescaledScenes.map((s) => s.prompt);
+        const { files } = await downloadScenedNanoBananaMedia(scenePrompts, aspectRatio, mediaDir, projectId);
+        let stillMissing = files.map((f, i) => (f === null ? i : -1)).filter((i) => i >= 0);
+
+        // Nano Banana already retries transient failures internally — if a
+        // scene is still missing after that, fall back to free stock media
+        // for just that scene rather than leaving a manual-upload gap.
+        if (stillMissing.length > 0) {
+          const sceneSearchTerms = stillMissing.map((i) =>
+            rescaledScenes[i].searchTerms?.length ? rescaledScenes[i].searchTerms : [rescaledScenes[i].narrationExcerpt || rescaledScenes[i].prompt].filter(Boolean),
+          );
+          const { files: stockFiles } = await downloadScenedStockMedia(sceneSearchTerms, orientation, mediaDir);
+          const recoveredIndices: number[] = [];
+          for (let j = 0; j < stillMissing.length; j += 1) {
+            if (!stockFiles[j]) continue;
+            const sceneIndex = stillMissing[j];
+            const ext = path.extname(stockFiles[j]!);
+            const target = path.join(mediaDir, `scene_${sceneIndex}${ext}`);
+            await fsp.rename(stockFiles[j]!, target).catch(() => {});
+            files[sceneIndex] = target;
+            recoveredIndices.push(sceneIndex);
+          }
+          stillMissing = stillMissing.filter((i) => !recoveredIndices.includes(i));
+        }
+
+        const gotAll = files.length > 0 && files.every((f) => f !== null) && stillMissing.length === 0;
+        updateStoryProject(projectId, {
+          status: "script_ready",
+          error_message: gotAll ? null : "சில scenes-க்கு Nano Banana image generate ஆகவில்லை — கீழே manual-ஆக upload செய்யவும்",
         });
       } else {
         const sceneSearchTerms = rescaledScenes.map((s) =>

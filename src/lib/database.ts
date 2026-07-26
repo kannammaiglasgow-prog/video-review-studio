@@ -486,7 +486,7 @@ export type StoryProjectRow = {
   updated_at: string;
 };
 
-export type StoryOptions = { aspectRatio?: "16:9" | "9:16"; bgm?: boolean; animate?: boolean; language?: "ta" | "en"; mediaSource?: "stock" | "ai"; ttsMode?: "free" | "paid"; localize?: boolean; intendedChannel?: string };
+export type StoryOptions = { aspectRatio?: "16:9" | "9:16"; bgm?: boolean; animate?: boolean; language?: "ta" | "en"; mediaSource?: "stock" | "ai" | "nano-banana"; ttsMode?: "free" | "paid"; localize?: boolean; intendedChannel?: string };
 
 export function createStoryProject(storyInput: string, durationTarget: number, voice: string, options: StoryOptions = {}): number {
   const db = database();
@@ -669,7 +669,7 @@ export function updateStoryProject(id: number, fields: Partial<Omit<StoryProject
 
 // ── Story-channel Idea Engine (Tamil Story + English Stories automation) ────
 
-export type AutoStorySettings = { enabled: boolean; times: string[]; voice: string; shortsEnabled: boolean; shortsTimes: string[]; mediaSource: "stock" | "ai" };
+export type AutoStorySettings = { enabled: boolean; times: string[]; voice: string; shortsEnabled: boolean; shortsTimes: string[]; mediaSource: "stock" | "ai" | "nano-banana" };
 
 function parseTimeList(json: string | undefined, fallback: string[] = []): string[] {
   if (!json) return fallback;

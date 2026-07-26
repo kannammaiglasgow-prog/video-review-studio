@@ -19,15 +19,18 @@ export async function POST(request: Request) {
     const animate = body.animate !== false; // default on
     const language: "ta" | "en" = body.language === "en" ? "en" : "ta";
     // Scene media: "stock" = free Pexels/Pixabay footage (default, most
-    // reliable); "ai" = free Pollinations/Flux image generated per scene.
-    const mediaSource: "stock" | "ai" = body.mediaSource === "ai" ? "ai" : "stock";
+    // reliable); "ai" = free Pollinations/Flux image per scene (rate-limited,
+    // medium quality); "nano-banana" = paid Gemini image model (~$0.039/image,
+    // high quality, no rate-limiting).
+    const mediaSource: "stock" | "ai" | "nano-banana" =
+      body.mediaSource === "ai" ? "ai" : body.mediaSource === "nano-banana" ? "nano-banana" : "stock";
     const ttsMode: "free" | "paid" = body.ttsMode === "free" ? "free" : "paid";
     const localize = Boolean(body.localize);
     const intendedChannel = typeof body.channel === "string" && body.channel ? body.channel : "story";
     // Drives the scene-prompt cultural guardrail (South Indian Hindu imagery,
     // consistent character wording) — only the devotional channel needs it
     // explicitly; Tamil-language content gets it by default in generateSceneBreakdown.
-    const genre = intendedChannel === "devotional" ? "devotional" : "drama";
+    const genre = intendedChannel === "devotional" ? "devotional" : intendedChannel === "news" ? "news" : "drama";
 
     if (story.length < 20) return NextResponse.json({ error: "குறைந்தது 20 எழுத்துகள் கொண்ட கதை/செய்தியை பேஸ்ட் செய்யவும்" }, { status: 400 });
     if (durationSeconds < 20 || durationSeconds > 1200) return NextResponse.json({ error: "Duration 20 விநாடி முதல் 20 நிமிடம் வரை மட்டுமே" }, { status: 400 });

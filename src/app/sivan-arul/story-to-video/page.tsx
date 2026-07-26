@@ -76,6 +76,9 @@ function statusLabelFor(status: string, mediaSource?: string): string {
   if (status === "fetching_media" && mediaSource === "ai") {
     return "🎨 AI images (Pollinations/Flux) ஒவ்வொரு scene-க்கும் generate ஆகிறது...";
   }
+  if (status === "fetching_media" && mediaSource === "nano-banana") {
+    return "💎 Nano Banana (Gemini) images ஒவ்வொரு scene-க்கும் generate ஆகிறது...";
+  }
   return statusLabels[status] || status;
 }
 
@@ -94,7 +97,7 @@ export default function StoryToVideoPage() {
   const [animate, setAnimate] = useState(true);
   const [language, setLanguage] = useState<"ta" | "en">("ta");
   const [ttsMode, setTtsMode] = useState<"free" | "paid">("free");
-  const [mediaSource, setMediaSource] = useState<"stock" | "ai">("stock");
+  const [mediaSource, setMediaSource] = useState<"stock" | "ai" | "nano-banana">("stock");
   const [localize, setLocalize] = useState(false);
   const [autoUpload, setAutoUpload] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -663,9 +666,10 @@ export default function StoryToVideoPage() {
               </div>
               <div style={{ flex: "1 1 200px" }}>
                 <label style={label}>Scene Media</label>
-                <select value={mediaSource} onChange={(e) => setMediaSource(e.target.value as "stock" | "ai")} style={input}>
+                <select value={mediaSource} onChange={(e) => setMediaSource(e.target.value as "stock" | "ai" | "nano-banana")} style={input}>
                   <option value="stock">🎬 Stock footage (Pexels/Pixabay, free)</option>
                   <option value="ai">🎨 AI Generated (Pollinations/Flux, free)</option>
+                  <option value="nano-banana">💎 Nano Banana (Gemini, paid ~$0.04/image)</option>
                 </select>
               </div>
               <div style={{ flex: "1 1 200px", display: "flex", flexDirection: "column", justifyContent: "flex-end", gap: 8 }}>
@@ -718,7 +722,7 @@ export default function StoryToVideoPage() {
                 return (
                   <div style={{ marginTop: 10 }}>
                     <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#a0a0c0", marginBottom: 4 }}>
-                      <span>{project.mediaSource === "ai" ? "🎨 AI image generate ஆகிறது" : "🎬 Stock media fetch ஆகிறது"} — {done} / {total} scenes தயார்</span>
+                      <span>{project.mediaSource === "ai" ? "🎨 AI image generate ஆகிறது" : project.mediaSource === "nano-banana" ? "💎 Nano Banana image generate ஆகிறது" : "🎬 Stock media fetch ஆகிறது"} — {done} / {total} scenes தயார்</span>
                       <span>{pct}%</span>
                     </div>
                     <div style={{ width: "100%", height: 10, background: "#2a2a44", borderRadius: 6, overflow: "hidden" }}>
@@ -735,7 +739,7 @@ export default function StoryToVideoPage() {
                 <span style={{ fontSize: 13, color: "#c0c0d8" }}>
                   🗣️ {project.language === "en" ? "English" : "தமிழ்"}
                   {project.localize ? " 🌏Localized" : ""}
-                  {" · "}{project.mediaSource === "ai" ? "🎨 AI" : "🎬 Stock"}
+                  {" · "}{project.mediaSource === "ai" ? "🎨 AI" : project.mediaSource === "nano-banana" ? "💎 Nano Banana" : "🎬 Stock"}
                   {" · "}{project.ttsMode === "free" ? "🆓 Free TTS" : "💎 Paid TTS"}
                   {" · "}{project.aspectRatio === "9:16" ? "📱 Short 9:16" : "🖥️ Long 16:9"}
                   {" · "}🎵 BGM {project.bgmEnabled ? "On" : "Off"}
