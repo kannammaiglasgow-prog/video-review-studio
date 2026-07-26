@@ -44,16 +44,17 @@ export async function runStoryGenerationPipeline(projectId: number, params: Stor
     const script = await expandScriptForDuration(story, durationSeconds, projectId, language, localize);
     updateStoryProject(projectId, { script, status: "writing_scenes" });
 
-    // AI-generated images are paced/rate-limited (free Pollinations endpoint —
-    // see downloadScenedAIMedia), so an "ai" project uses fewer, longer-held
-    // scenes (~28s each via Ken Burns pan/zoom) instead of stock's 6s/scene —
-    // a 3-minute video needs ~6-7 AI images instead of ~30, cutting generation
-    // time further on top of the per-request pacing. Visually this is a
-    // normal held-image style, not a quality compromise. "nano-banana" is a
-    // paid, reliable API (no rate-limit pacing needed) but still costs
-    // ~$0.039/image, so 10s/scene keeps per-video spend reasonable while
-    // giving noticeably more visual variety than the free "ai" path.
-    const secondsPerScene = mediaSource === "ai" ? 28 : mediaSource === "nano-banana" ? 10 : 6;
+    // Holding one still image for tens of seconds reads as a dead video, so
+    // AI-image scenes cap at 4s on screen — the same pacing rule as stock
+    // footage, just image-based. This costs generation time on the free
+    // Pollinations path (more images, each rate-limit-paced) but that's the
+    // right trade for watchability. "nano-banana" is a paid, reliable API,
+    // so it sits at 6s to keep per-video spend (~$0.039/image) reasonable
+    // while staying visually alive.
+    // NOTE: generateSceneBreakdown caps scene count at 40, so videos longer
+    // than ~2.7 min will still exceed 4s/scene — unavoidable without a much
+    // larger image budget.
+    const secondsPerScene = mediaSource === "ai" ? 4 : mediaSource === "nano-banana" ? 6 : 6;
     const scenes = await generateSceneBreakdown(script, durationSeconds, projectId, language, secondsPerScene, genre, mediaSource);
     updateStoryProject(projectId, { scenes_json: JSON.stringify(scenes), status: "generating_audio" });
 

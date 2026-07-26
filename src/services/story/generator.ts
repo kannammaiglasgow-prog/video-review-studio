@@ -325,6 +325,60 @@ JSON மட்டும் தாருங்கள் (newlines-ஐ \\n ஆக 
   return script;
 }
 
+/** Writes a scroll-stopping opening hook line for a story the user has
+ * already pasted into the create form — separate from the full-script
+ * generators above so the user can regenerate just the hook (as many times as
+ * they like) and keep the one they're happy with, before committing to a
+ * render. `avoid` carries the hooks already shown so a regenerate actually
+ * produces something different instead of rephrasing the same idea. */
+export async function generateHookLine(story: string, language: OutputLanguage = "ta", avoid: string[] = []): Promise<string> {
+  const langName = languageNames[language] || "Tamil";
+  const avoidBlock = avoid.length
+    ? `\n\nALREADY REJECTED (produce something clearly DIFFERENT in angle and wording, not a rephrasing):\n${avoid.map((h) => `- ${h}`).join("\n")}`
+    : "";
+
+  const prompt = language === "en"
+    ? `You are a viral YouTube Shorts writer. Below is a story. Write ONE opening hook line in ENGLISH for it.
+
+The hook must:
+- Be a single sentence that stops the scroll — a shocking statement, an impossible-sounding claim, or a mid-action moment that opens a curiosity gap.
+- Make it impossible to guess what happens next.
+- NOT be scene-setting or an introduction ("It was a normal day..." is wrong).
+- Be spoken-word natural (it will be read by Text-to-Speech). No emoji, hashtags, quotes, or markdown.
+
+Story:
+${story}${avoidBlock}
+
+Return ONLY JSON: {"hook": "..."}`
+    : `நீங்கள் ஒரு வைரல் YouTube Shorts எழுத்தாளர். கீழே ஒரு கதை கொடுக்கப்பட்டுள்ளது. அதற்கு ஒரு ${langName} opening hook வரி மட்டும் எழுதுங்கள்.
+
+Hook எப்படி இருக்க வேண்டும்:
+- ஒரே ஒரு வாக்கியம் — scroll-ஐ நிறுத்தும் அதிர்ச்சிகரமான statement, நம்பமுடியாத claim, அல்லது உச்சகட்ட தருணம்.
+- அடுத்து என்ன நடக்கும் என்று யூகிக்க முடியக்கூடாது.
+- Scene-setting/அறிமுகம் கூடாது ("ஒரு சாதாரண நாள்..." போன்றவை தவறு).
+- Text-to-Speech மூலம் படிக்கப்படும் — இயல்பான பேச்சு வாக்கியம், Emoji/hashtags/quotes/markdown வேண்டாம்.
+
+கதை:
+${story}${avoidBlock}
+
+JSON மட்டும் தாருங்கள்: {"hook": "..."}`;
+
+  // High temperature so repeated regenerates genuinely diverge — but at 1.0
+  // Gemini intermittently returns an empty candidate (seen ~1 in 3 live), so
+  // retry a couple of times, easing the temperature down each attempt.
+  for (const temperature of [1.0, 0.9, 0.8]) {
+    try {
+      const raw = await geminiText(prompt, temperature);
+      const data = parseJson<{ hook?: string }>(raw);
+      const hook = typeof data.hook === "string" ? data.hook.trim() : "";
+      if (hook) return hook;
+    } catch (err) {
+      console.warn(`[Hook] attempt at temp ${temperature} failed:`, err instanceof Error ? err.message : err);
+    }
+  }
+  throw new Error("Gemini hook உருவாக்கவில்லை — மீண்டும் முயற்சிக்கவும்");
+}
+
 export type StoryScenePrompt = { prompt: string; seconds: number; narrationExcerpt: string; searchTerms: string[] };
 
 export async function generateSceneBreakdown(script: string, durationSeconds: number, storyId?: number, language: OutputLanguage = "ta", secondsPerScene = 6, genre: IdeaGenre = "drama", mediaSource: "stock" | "ai" | "nano-banana" = "stock"): Promise<StoryScenePrompt[]> {

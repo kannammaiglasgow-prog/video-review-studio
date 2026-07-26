@@ -126,7 +126,42 @@ export default function StoryToVideoPage() {
   const [pastedImagePreview, setPastedImagePreview] = useState<string | null>(null);
   const [linkUrl, setLinkUrl] = useState("");
   const [linkExtracting, setLinkExtracting] = useState(false);
+  const [hook, setHook] = useState("");
+  const [rejectedHooks, setRejectedHooks] = useState<string[]>([]);
+  const [hookGenerating, setHookGenerating] = useState(false);
   const fileInputRefs = useRef<Record<number, HTMLInputElement | null>>({});
+
+  // Generate a scroll-stopping opening line for the pasted story. Regenerating
+  // sends the previously-shown hooks as `avoid` so each attempt is a genuinely
+  // different angle, not a rephrasing. The kept hook is prepended to the story
+  // on submit (see the create handler), so it becomes the script's opening.
+  const generateHook = async (isRegenerate = false) => {
+    if (story.trim().length < 20) {
+      setMessage("❌ முதலில் கதை/செய்தியை உள்ளிடவும் (குறைந்தது 20 எழுத்துகள்)");
+      return;
+    }
+    setHookGenerating(true);
+    setMessage("");
+    const avoid = isRegenerate && hook ? [...rejectedHooks, hook] : rejectedHooks;
+    try {
+      const res = await fetch("/api/sivan-arul/story-to-video/generate-hook", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ story, language, avoid }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        if (isRegenerate && hook) setRejectedHooks(avoid);
+        setHook(data.hook);
+      } else {
+        setMessage(`❌ ${data.error}`);
+      }
+    } catch {
+      setMessage("❌ Hook உருவாக்க முடியவில்லை — மீண்டும் முயற்சிக்கவும்");
+    } finally {
+      setHookGenerating(false);
+    }
+  };
 
   // Paste a news article's URL — server fetches the page and Gemini pulls out
   // just the headline + body (ignoring nav/ads/comments), same as pasting the
@@ -207,6 +242,8 @@ export default function StoryToVideoPage() {
     setProjectId(null);
     setProject(null);
     setStory("");
+    setHook("");
+    setRejectedHooks([]);
     setTitle("");
     setDescription("");
     setTags("");
@@ -278,11 +315,14 @@ export default function StoryToVideoPage() {
     if (story.trim().length < 20) { setMessage("❌ குறைந்தது 20 எழுத்துகள் கொண்ட கதையை பேஸ்ட் செய்யவும்"); return; }
     setSubmitting(true);
     setMessage("");
+    // A kept hook becomes the story's opening line, so the generated script
+    // starts on it instead of whatever the pasted text began with.
+    const storyWithHook = hook.trim() ? `${hook.trim()}\n\n${story.trim()}` : story;
     try {
       const res = await fetch("/api/sivan-arul/story-to-video", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ story, durationSeconds: durationMinutes * 60, voice, aspectRatio, bgm, animate, language, ttsMode, mediaSource, localize, channel }),
+        body: JSON.stringify({ story: storyWithHook, durationSeconds: durationMinutes * 60, voice, aspectRatio, bgm, animate, language, ttsMode, mediaSource, localize, channel }),
       });
       const data = await res.json();
       if (data.success) {
@@ -611,6 +651,41 @@ export default function StoryToVideoPage() {
                 </span>
               </div>
             )}
+
+            {/* Opening hook — generate, regenerate until happy, or edit by hand.
+                The kept hook is prepended to the story when the video is created. */}
+            <div style={{ marginBottom: 14 }}>
+              {!hook ? (
+                <button onClick={() => generateHook(false)} disabled={hookGenerating || story.trim().length < 20} style={hookGenerating || story.trim().length < 20 ? btnDisabled : btn}>
+                  {hookGenerating ? "⏳ Hook உருவாக்குகிறது..." : "🎣 Hook உருவாக்கு (Create Hook)"}
+                </button>
+              ) : (
+                <div style={{ padding: 12, background: "#0f0f1e", borderRadius: 8, border: "1px solid #2d5a3a" }}>
+                  <label style={{ ...label, marginBottom: 6 }}>🎣 Opening Hook (edit செய்யலாம்)</label>
+                  <textarea
+                    value={hook}
+                    onChange={(e) => setHook(e.target.value)}
+                    rows={2}
+                    style={{ ...input, resize: "vertical", marginBottom: 8 }}
+                  />
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <button onClick={() => generateHook(true)} disabled={hookGenerating} style={hookGenerating ? btnDisabled : btn}>
+                      {hookGenerating ? "⏳ மாற்றுகிறது..." : "🔄 வேறு hook (Regenerate)"}
+                    </button>
+                    <button
+                      onClick={() => { setHook(""); setRejectedHooks([]); }}
+                      disabled={hookGenerating}
+                      style={{ ...btn, background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.15)" }}
+                    >
+                      ✕ Hook நீக்கு
+                    </button>
+                  </div>
+                  <div style={{ marginTop: 8, fontSize: 11.5, color: "#707090" }}>
+                    இந்த hook கதையின் தொடக்கத்தில் சேர்க்கப்படும்.
+                  </div>
+                </div>
+              )}
+            </div>
             <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer", marginBottom: 12, fontSize: 13, color: "#c0c0d8" }}>
               <input type="checkbox" checked={autoUpload} onChange={(e) => setAutoUpload(e.target.checked)} style={{ marginTop: 3 }} />
               <span>🚀 <b>Auto Upload</b> — media தயாரானதும் தானாகவே render ஆகும் (எப்போதும்); இது tick செய்திருந்தால், render முடிந்ததும் SEO தானாக generate ஆகி நேரடியாக YouTube-க்கு (தேர்ந்த channel/privacy-உடன்) upload ஆகிவிடும் — எந்த button-ஐயும் அழுத்த வேண்டாம்.</span>
