@@ -7,7 +7,7 @@ import type { OutputLanguage } from "@/lib/config";
 import { geminiSpeechProvider } from "@/services/providers/gemini";
 import { edgeSpeechProvider } from "@/services/providers/edge-tts";
 import { probeAudioDuration } from "@/services/render/ffprobe";
-import { expandScriptForDuration, generateSceneBreakdown } from "@/services/story/generator";
+import { expandScriptForDuration, generateSceneBreakdown, type IdeaGenre } from "@/services/story/generator";
 import { downloadScenedStockMedia } from "@/services/providers/stock-media";
 import { downloadScenedAIMedia, retryScenesWithVariantPrompts } from "@/services/providers/pollinations";
 import { renderVideo, type SceneClip } from "@/services/render/ffmpeg";
@@ -24,6 +24,10 @@ export type StoryPipelineParams = {
   // "stock" = free Pexels/Pixabay footage (default, most reliable); "ai" = free
   // Pollinations/Flux image generated per scene from its own detailed prompt.
   mediaSource?: "stock" | "ai";
+  // Drives the scene-prompt cultural guardrail (South Indian Hindu authenticity
+  // + consistent character wording) in generateSceneBreakdown — defaults to
+  // "drama" (no extra guardrail beyond the Tamil-language default there).
+  genre?: IdeaGenre;
 };
 
 /** Script → scenes → TTS narration → copyright-free stock media, fully automatic.
@@ -33,7 +37,7 @@ export type StoryPipelineParams = {
  * is recorded on the project itself (status='failed') rather than thrown, since
  * both callers run this in the background after already responding/logging. */
 export async function runStoryGenerationPipeline(projectId: number, params: StoryPipelineParams): Promise<void> {
-  const { story, durationSeconds, voice, aspectRatio, language, ttsMode, localize, mediaDir, mediaSource = "stock" } = params;
+  const { story, durationSeconds, voice, aspectRatio, language, ttsMode, localize, mediaDir, mediaSource = "stock", genre = "drama" } = params;
   try {
     const script = await expandScriptForDuration(story, durationSeconds, projectId, language, localize);
     updateStoryProject(projectId, { script, status: "writing_scenes" });
@@ -45,7 +49,7 @@ export async function runStoryGenerationPipeline(projectId: number, params: Stor
     // time roughly 3x. Visually this is a normal held-image style, not a
     // quality compromise.
     const secondsPerScene = mediaSource === "ai" ? 18 : 6;
-    const scenes = await generateSceneBreakdown(script, durationSeconds, projectId, language, secondsPerScene);
+    const scenes = await generateSceneBreakdown(script, durationSeconds, projectId, language, secondsPerScene, genre);
     updateStoryProject(projectId, { scenes_json: JSON.stringify(scenes), status: "generating_audio" });
 
     const audioPath = path.join(mediaDir, "narration.wav");

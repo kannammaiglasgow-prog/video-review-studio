@@ -80,7 +80,7 @@ async function prepareAutoStoryIdea(channel: StoryChannel, format: StoryFormat =
   return {
     projectId,
     premise: idea.premise,
-    pipelineParams: { story, durationSeconds, voice, aspectRatio, language, ttsMode: "free", localize: false, mediaDir, mediaSource: settings.mediaSource },
+    pipelineParams: { story, durationSeconds, voice, aspectRatio, language, ttsMode: "free", localize: false, mediaDir, mediaSource: settings.mediaSource, genre },
   };
 }
 

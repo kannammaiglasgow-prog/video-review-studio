@@ -261,13 +261,31 @@ JSON மட்டும் தாருங்கள் (newlines-ஐ \\n ஆக 
 
 export type StoryScenePrompt = { prompt: string; seconds: number; narrationExcerpt: string; searchTerms: string[] };
 
-export async function generateSceneBreakdown(script: string, durationSeconds: number, storyId?: number, language: OutputLanguage = "ta", secondsPerScene = 6): Promise<StoryScenePrompt[]> {
+export async function generateSceneBreakdown(script: string, durationSeconds: number, storyId?: number, language: OutputLanguage = "ta", secondsPerScene = 6, genre: IdeaGenre = "drama"): Promise<StoryScenePrompt[]> {
   const langName = languageNames[language] || "Tamil";
   const sceneCount = Math.max(4, Math.min(40, Math.round(durationSeconds / secondsPerScene)));
+  // Tamil-language and devotional content on this channel is South Indian
+  // (Tamil Nadu) Hindu by default — without this, image models default to
+  // generic/Western depictions for ambiguous English words in the prompt
+  // (e.g. "priest" rendering as a Christian pastor/church for a Hindu
+  // ceremony scene, confirmed live during testing). Also asks for verbatim-
+  // consistent character wording across scenes since each scene's image is
+  // generated independently with no shared visual memory.
+  const devotionalGuardrail = `\n\nCRITICAL VISUAL AUTHENTICITY: Unless the script clearly states otherwise, this is set in South India (Tamil Nadu) — every visual element in every scene's prompt must be authentically South Indian: Dravidian-style temples with gopuram towers (never churches or generic Western architecture), Hindu priests (பூஜாரி) in traditional dhoti/veshti with sacred ash (vibhuti) markings (never a Christian pastor or Western clergy), people in traditional South Indian attire (veshti, saree), South Indian village houses, roads, and animals. Never depict church interiors, Western clergy, or non-Hindu religious symbols.`;
+  // General Tamil-language content (drama/news/etc, not devotional) just needs
+  // an authentically South Indian everyday setting — no reason to force temple
+  // or religious imagery into scenes that have nothing to do with worship.
+  const tamilSettingGuardrail = `\n\nVISUAL AUTHENTICITY: Unless the script clearly states a different real-world setting, depict authentically South Indian (Tamil Nadu) everyday visuals — houses, streets, clothing, vehicles, and surroundings should look genuinely South Indian, not generic/Western/ambiguous.`;
+  const characterConsistencyGuardrail = `\nCHARACTER CONSISTENCY: If the same person/family recurs across scenes, describe them with the EXACT SAME wording every time they appear (e.g. always "a middle-aged man in a checked shirt, short grey hair" verbatim) so they stay visually consistent across the video.`;
+  const culturalGuardrail = genre === "devotional"
+    ? devotionalGuardrail + characterConsistencyGuardrail
+    : language === "ta"
+    ? tamilSettingGuardrail + characterConsistencyGuardrail
+    : "";
   const prompt = `கீழே உள்ள ${langName} narration script-ஐ காலவரிசைப்படி சரியாக ${sceneCount} காட்சிகளாக (scenes) பிரிக்கவும். ஒவ்வொரு காட்சிக்கும்:
 1. "narrationExcerpt": அந்த காட்சியின் போது பேசப்படும் script-ன் ${langName} பகுதி (சுருக்கமாக, exact text — same language as the script).
 2. "prompt": அந்த காட்சிக்கான ஒரு விரிவான English image-generation prompt (any AI image generator style — cinematic, photorealistic அல்லது painterly, 16:9, real நபர்களை குறிப்பிட்ட பெயரால் அடையாளப்படுத்தாமல் — silhouettes/symbolic/generic depiction பயன்படுத்தவும் இது ஒரு உண்மைக் கதையாக இருந்தால்). இது manual reference-க்காக மட்டும் — scene description ஆக காட்டப்படும்.
-3. "searchTerms": அந்த காட்சிக்கு பொருத்தமான 2-3 சுருக்கமான English stock-footage தேடல் சொற்கள் (Pexels/Pixabay-ல் தேட ஏற்றவை — எ.கா. "rural indian village sunset", "woman walking road"; ambiguous சொற்களை முழு video context வைத்து disambiguate செய்யவும்).
+3. "searchTerms": அந்த காட்சிக்கு பொருத்தமான 2-3 சுருக்கமான English stock-footage தேடல் சொற்கள் (Pexels/Pixabay-ல் தேட ஏற்றவை — எ.கா. "rural indian village sunset", "woman walking road"; ambiguous சொற்களை முழு video context வைத்து disambiguate செய்யவும்).${culturalGuardrail}
 
 Script:
 ${script}

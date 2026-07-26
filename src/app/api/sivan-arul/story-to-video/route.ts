@@ -24,6 +24,10 @@ export async function POST(request: Request) {
     const ttsMode: "free" | "paid" = body.ttsMode === "free" ? "free" : "paid";
     const localize = Boolean(body.localize);
     const intendedChannel = typeof body.channel === "string" && body.channel ? body.channel : "story";
+    // Drives the scene-prompt cultural guardrail (South Indian Hindu imagery,
+    // consistent character wording) — only the devotional channel needs it
+    // explicitly; Tamil-language content gets it by default in generateSceneBreakdown.
+    const genre = intendedChannel === "devotional" ? "devotional" : "drama";
 
     if (story.length < 20) return NextResponse.json({ error: "குறைந்தது 20 எழுத்துகள் கொண்ட கதை/செய்தியை பேஸ்ட் செய்யவும்" }, { status: 400 });
     if (durationSeconds < 20 || durationSeconds > 1200) return NextResponse.json({ error: "Duration 20 விநாடி முதல் 20 நிமிடம் வரை மட்டுமே" }, { status: 400 });
@@ -34,7 +38,7 @@ export async function POST(request: Request) {
 
     // Errors are recorded on the project itself (status='failed') by the pipeline,
     // not thrown here — this response has already been sent by the time it matters.
-    runStoryGenerationPipeline(projectId, { story, durationSeconds, voice, aspectRatio, language, ttsMode, localize, mediaDir, mediaSource });
+    runStoryGenerationPipeline(projectId, { story, durationSeconds, voice, aspectRatio, language, ttsMode, localize, mediaDir, mediaSource, genre });
 
     return NextResponse.json({ success: true, projectId });
   } catch (error) {
