@@ -2,10 +2,10 @@ import path from "node:path";
 import fsp from "node:fs/promises";
 import { config } from "@/lib/config";
 import { createStoryProject, getAutoStorySettings, setAutoStorySettings, getUnusedIdea, addIdeasToPool, markIdeaPoolUsed, countUnusedIdeas, type StoryIdea, type IdeaGenre } from "@/lib/database";
-import { generateIdeaBatch, generateOriginalStoryFromPremise, generateDevotionalScriptFromPremise } from "@/services/story/generator";
+import { generateIdeaBatch, generateOriginalStoryFromPremise, generateDevotionalScriptFromPremise, generateNewsCommentaryScriptFromPremise } from "@/services/story/generator";
 import { runStoryGenerationPipeline, renderStoryVideo } from "@/services/story/pipeline";
 
-export type StoryChannel = "story" | "english" | "devotional";
+export type StoryChannel = "story" | "english" | "devotional" | "news";
 export type StoryFormat = "long" | "short";
 
 const POOL_REFILL_THRESHOLD = 5;
@@ -17,12 +17,16 @@ const FORMAT_CONFIG: Record<StoryFormat, { durationSeconds: number; aspectRatio:
 };
 
 // Which idea-pool genre and narration language each channel draws from — drama
-// channels (Tamil Story / English Stories) share one pool, devotional has its
-// own so premises never mix across the two very different content styles.
+// channels (Tamil Story / English Stories) share one pool, devotional and news
+// each have their own so premises never mix across very different content
+// styles (news premises are deliberately generic civics/governance explainer
+// themes, never claims about real ongoing events/named individuals — see
+// generateIdeaBatch/generateNewsCommentaryScriptFromPremise for the reasoning).
 const CHANNEL_CONFIG: Record<StoryChannel, { genre: IdeaGenre; language: "ta" | "en" }> = {
   story: { genre: "drama", language: "ta" },
   english: { genre: "drama", language: "en" },
   devotional: { genre: "devotional", language: "ta" },
+  news: { genre: "news", language: "ta" },
 };
 
 /** Draws one fresh premise from the local idea pool for this genre, refilling
@@ -60,6 +64,8 @@ async function prepareAutoStoryIdea(channel: StoryChannel, format: StoryFormat =
   const voice = settings.voice;
   const story = genre === "devotional"
     ? await generateDevotionalScriptFromPremise(idea.premise, undefined, durationSeconds)
+    : genre === "news"
+    ? await generateNewsCommentaryScriptFromPremise(idea.premise, undefined, durationSeconds)
     : await generateOriginalStoryFromPremise(idea.premise, language, undefined, durationSeconds);
 
   const projectId = createStoryProject(story, durationSeconds, voice, {

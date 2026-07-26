@@ -94,7 +94,7 @@ function ToggleSwitch({ on, onClick }: { on: boolean; onClick: () => void }) {
   );
 }
 
-function IdeaEngineAutomation({ channel }: { channel: "story" | "english" | "devotional" }) {
+function IdeaEngineAutomation({ channel }: { channel: "story" | "english" | "devotional" | "news" }) {
   const [enabled, setEnabled] = useState(false);
   const [times, setTimes] = useState<string[]>([]);
   const [newTime, setNewTime] = useState("11:00");
@@ -345,7 +345,7 @@ export default function ChannelDetailPage() {
           )}
         </div>
 
-        {(channel === "story" || channel === "english" || channel === "devotional") && <IdeaEngineAutomation channel={channel} />}
+        {(channel === "story" || channel === "english" || channel === "devotional" || channel === "news") && <IdeaEngineAutomation channel={channel} />}
 
         {/* Currently in progress */}
         <div style={box}>

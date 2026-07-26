@@ -146,11 +146,23 @@ ${storyInput}
   return script;
 }
 
-export type IdeaGenre = "drama" | "devotional";
+export type IdeaGenre = "drama" | "devotional" | "news";
 
 const IDEA_CATEGORIES: Record<IdeaGenre, string[]> = {
   drama: ["betrayal", "inheritance", "revenge", "family secrets", "mistaken identity", "crime/mystery", "rich vs poor", "sacrifice", "workplace conflict", "village/community dispute"],
-  devotional: ["deity legend/lore", "temple history/mahima", "festival significance", "moral parable", "saint/bhakta life story", "bhakti philosophy", "ritual meaning", "nature & spirituality", "answered prayer/miracle story", "guru teaching"],
+  // Skewed toward "hidden secret / untold moment" mystery framing on
+  // well-known epic characters and deities — a competitor analysis
+  // (204K-subscriber Tamil devotional Shorts channel, only 33 videos, some
+  // with 1-7M+ views) confirmed this specific angle is what actually drives
+  // views in this niche, far more than generic "deity legend/lore" topics.
+  devotional: ["hidden secret/untold moment in Mahabharata", "hidden secret/untold moment in Ramayana", "Krishna's lesser-known moments", "Shiva mystery/lore explained", "temple ritual mystery explained", "deity legend/lore", "moral parable with a twist", "saint/bhakta life story", "answered prayer/miracle story", "festival significance"],
+  // Deliberately evergreen civics/governance EXPLAINER themes, not live
+  // political predictions or claims about specific ongoing controversies —
+  // Gemini has no real-time fact grounding, so anything asserting analysis of
+  // active named individuals/parties risks confidently stating something
+  // wrong or defamatory. "How does X work" is safe; "what will Y party do
+  // next" is not.
+  news: ["election process explainer", "government scheme explained", "citizen rights & duties", "how a law/bill becomes law", "civic body roles (Panchayat/Corporation)", "judiciary & courts explainer", "public policy history", "economic concept explainer", "environmental policy explainer", "civic responsibility & voting"],
 };
 
 // Idea Engine step 1: Gemini invents a batch of brand-new one-line premises
@@ -165,14 +177,33 @@ const IDEA_CATEGORIES: Record<IdeaGenre, string[]> = {
 export async function generateIdeaBatch(count = 20, genre: IdeaGenre = "drama"): Promise<{ premise: string; category: string }[]> {
   const categories = IDEA_CATEGORIES[genre];
   const prompt = genre === "devotional"
-    ? `You are a Tamil devotional (Sanatana Hindu) content editor. Invent ${count} completely original, one-line CONTENT PREMISES for a Tamil devotional YouTube channel (Shiva, Murugan, Amman, Vishnu/Krishna, Lakshmi, Durga, Hanuman, Sai Baba, and other Hindu deities/saints).
+    ? `You are a Tamil devotional (Sanatana Hindu) content editor for a Shorts channel. Invent ${count} completely original, one-line CONTENT PREMISES about Hindu epics and deities (Mahabharata, Ramayana, Shiva, Murugan, Amman, Vishnu/Krishna, Lakshmi, Durga, Hanuman, and other deities/saints).
+
+PROVEN FORMAT (competitor analysis confirmed this specific angle drives views far better than generic legend topics): frame each premise as a CURIOSITY-DRIVEN "hidden secret" or "untold moment" about a SPECIFIC, well-known character or scene within a famous epic/deity's story — not a broad theme. Think "a detail most people miss about a moment they already know", not "an overview of a deity's qualities".
 
 Each premise must be:
 - A short, specific TOPIC SPARK only (one sentence, under 20 words) — a theme to explore, not a full script.
 - Reverent and spiritually meaningful — never comedic, never disrespectful, no invented "facts" presented as scripture (frame legends/stories as traditional lore, not literal historical claims).
 - Genuinely different from the others — spread across varied categories: ${categories.join(", ")}.
 
-Example premise: "Why Lord Murugan's Vel represents the destruction of ignorance, not violence."
+Example premises (this exact style): "Why Karna never revealed his true identity to Arjuna until the very end." / "The real reason Krishna refused to lift a weapon in the Mahabharata war." / "What Sita said to Ravana moments before he died." / "Why Shiva's third eye is never depicted fully open."
+
+Return ONLY JSON: {"ideas": [{"premise": "...", "category": "one of the categories above"}, ...]} — exactly ${count} entries.`
+    : genre === "news"
+    ? `You are a civics/public-affairs education editor for a Tamil Nadu / India current-affairs YouTube channel. Invent ${count} completely original, one-line EXPLAINER TOPIC PREMISES.
+
+CRITICAL SAFETY RULE: Each premise must be a general, evergreen CIVICS/GOVERNANCE/POLICY EXPLAINER theme — e.g. how a process/institution/law works, or the history/purpose of a policy area. It must NEVER:
+- Name a specific real political party, politician, or living individual
+- Reference a live/ongoing controversy, allegation, election result, or prediction about current events
+- Take a side on any partisan question
+Think "how does X work" or "what is the history of Y", never "what will Z do" or "is X right/wrong".
+
+Each premise must be:
+- A short, specific TOPIC SPARK only (one sentence, under 20 words).
+- Educational and neutral in framing.
+- Genuinely different from the others — spread across varied categories: ${categories.join(", ")}.
+
+Example premise: "How the Model Code of Conduct works during Indian elections."
 
 Return ONLY JSON: {"ideas": [{"premise": "...", "category": "one of the categories above"}, ...]} — exactly ${count} entries.`
     : `You are a viral short-drama story editor. Invent ${count} completely original, one-line STORY PREMISES for a YouTube story-reading channel (relationship drama / revenge / family / mystery genre).
@@ -242,6 +273,8 @@ export async function generateDevotionalScriptFromPremise(premise: string, story
 
 தலைப்பு: "${premise}"
 
+இந்த script "hidden secret / untold moment" mystery-reveal style-ல இருக்க வேண்டும் — "நீங்க தெரிஞ்சிருக்குமா...", "இது யாருக்கும் தெரியாது..." போன்ற curiosity-ஐ தூண்டும் தொனியில், ஒரு specific epic moment/deity detail-ஐ படிப்படியா வெளிப்படுத்தும் விதமா எழுதுங்கள் — generic "deity-ன் குணங்கள்" overview இல்ல.
+
 வழிமுறைகள்:
 - தொனி: அமைதியான, மரியாதையான, பக்தி உணர்வு நிறைந்த குரலில் இருக்க வேண்டும் — நகைச்சுவை, கேலி, அல்லது அவமரியாதை கூடாது.
 - புராண/வழக்கு கதைகளை "பாரம்பரிய நம்பிக்கை/புராணம்" எனக் குறிப்பிட்டு சொல்லுங்கள் — உண்மையான வரலாற்று உண்மை எனக் கூற வேண்டாம்.
@@ -256,6 +289,39 @@ JSON மட்டும் தாருங்கள் (newlines-ஐ \\n ஆக 
   const data = parseJson<{ script?: string }>(raw);
   const script = typeof data.script === "string" ? data.script.trim() : "";
   if (!script) throw new Error("Gemini devotional script உருவாக்கவில்லை");
+  return script;
+}
+
+// Civics/governance explainer counterpart for the "news" genre (Tamil
+// Politics Star channel) — same "premise is just a theme spark" contract,
+// but a neutral, factual, educational tone instead of drama or devotional.
+// CRITICAL: the premise itself is already scoped (see generateIdeaBatch) to
+// general processes/institutions, never live political predictions or claims
+// about named real individuals/parties — this prompt reinforces that
+// boundary again at the script-writing stage since getting real people/
+// parties wrong carries real reputational/legal risk, unlike the other two
+// (fully fictional) genres. Tamil-only (matches the channel's audience).
+export async function generateNewsCommentaryScriptFromPremise(premise: string, storyId?: number, durationSeconds = 180): Promise<string> {
+  const targetChars = Math.round(durationSeconds * (charsPerSecondFor.ta || 12.5));
+  const isShort = durationSeconds <= 75;
+  const prompt = `நீங்கள் ஒரு நடுநிலையான, உண்மைத் தன்மை மிக்க Tamil Nadu/India civics & governance கல்வி YouTube சேனலுக்கான content எழுத்தாளர். கீழே ஒரு **பொது தலைப்பு** மட்டும் கொடுக்கப்பட்டுள்ளது.
+
+தலைப்பு: "${premise}"
+
+CRITICAL வழிமுறைகள் (கண்டிப்பாக பின்பற்றவும்):
+- இது ஒரு **general explainer/educational content** — எந்த ஒரு உண்மையான political party-ஐயோ, தலைவரையோ, தற்போதைய நபரையோ பெயர் குறிப்பிட்டு பேசக்கூடாது.
+- எந்த ஒரு தற்போதைய/நடப்பு political controversy, election result, allegation பற்றியும் கருத்து சொல்லக் கூடாது — process/institution/policy-ஐ மட்டும் நடுநிலையா விளக்கவும்.
+- ஒரு பக்கத்தையும் சாராமல், facts-ஐ மட்டும் தெளிவா, எளிமையா விளக்கவும்.
+- ${isShort ? "**முதல் வாக்கியமே** ஒரு ஆர்வமூட்டும் கேள்வியாக இருக்க வேண்டும் (எ.கா. \"தேர்தல் நேரத்தில் அரசு ஏன் புதிய திட்டங்களை அறிவிக்க முடியாது தெரியுமா?\")." : "முதல் இரண்டு வாக்கியங்களிலேயே ஒரு தெளிவான, ஆர்வமூட்டும் கேள்வியுடன் தொடங்கவும்."}
+- இதை Text-to-Speech மூலம் படிக்கப்படும் ${isShort ? "YouTube Shorts (ஒரு நிமிடத்திற்குள்)" : "explainer வீடியோ"}வுக்கானது — இயல்பான பேச்சு வாக்கியங்கள் மட்டும், Emoji/hashtags/markdown வேண்டாம்.
+- நீளம்: சரியாக சுமார் ${targetChars} எழுத்துகள் (${durationSeconds} விநாடி narration).
+
+JSON மட்டும் தாருங்கள் (newlines-ஐ \\n ஆக escape செய்யவும்): {"script": "..."}`;
+
+  const raw = await geminiText(prompt, 0.6, storyId ? { storyId, step: "auto_idea" } : undefined);
+  const data = parseJson<{ script?: string }>(raw);
+  const script = typeof data.script === "string" ? data.script.trim() : "";
+  if (!script) throw new Error("Gemini news explainer script உருவாக்கவில்லை");
   return script;
 }
 

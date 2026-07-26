@@ -396,6 +396,30 @@ function migrate(db: DatabaseSync) {
     db.exec(`ALTER TABLE auto_story_settings ADD COLUMN media_source TEXT NOT NULL DEFAULT 'stock'`);
   }
   db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (30, 'auto_story_media_source')");
+
+  // Extends the Idea Engine to the Tamil Politics Star (News) channel — a
+  // separate "news" genre pool of general, evergreen Tamil Nadu/India civics
+  // & governance explainer themes (deliberately NOT live political predictions
+  // or claims about specific ongoing controversies/named individuals, since
+  // Gemini has no real-time fact grounding and getting that wrong on real
+  // people/parties carries real reputational/legal risk unlike the fictional
+  // drama/devotional content). Render-only like the other channels — auto
+  // upload for this channel should stay off even more strictly given the
+  // subject matter.
+  db.exec("INSERT OR IGNORE INTO auto_story_settings (channel, enabled, times, shorts_times) VALUES ('news', 0, '[\"09:00\",\"19:00\"]', '[\"09:00\",\"10:30\",\"12:00\",\"13:30\",\"15:00\",\"16:30\",\"18:00\",\"19:30\",\"21:00\",\"22:30\"]')");
+  db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (31, 'auto_story_news_genre')");
+
+  // Competitor analysis (204K-subscriber devotional Shorts channel, only 33
+  // videos, some with 1-7M+ views) showed quality/hook-strength drives views
+  // in this niche far more than upload volume. Cuts Sivan Arul's default
+  // Shorts schedule from 10/day to 3/day (quality over quantity) — only for
+  // the devotional channel, and only if it's still on the original 10-slot
+  // default (never overwrites a value the user already customized).
+  db.exec(`
+    UPDATE auto_story_settings SET shorts_times = '["09:00","15:00","20:00"]', updated_at = CURRENT_TIMESTAMP
+    WHERE channel = 'devotional' AND shorts_times = '["09:00","10:30","12:00","13:30","15:00","16:30","18:00","19:30","21:00","22:30"]'
+  `);
+  db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (32, 'auto_story_devotional_quality_over_quantity')");
 }
 
 export function database() {
@@ -498,6 +522,52 @@ export function addStoryCost(storyId: number, step: string, amount: number) {
 
 function safeParse(text: string): Record<string, number> {
   try { return JSON.parse(text); } catch { return {}; }
+}
+
+export type CostSummary = {
+  today: number;
+  last7Days: number;
+  last30Days: number;
+  allTime: number;
+  byStep: Record<string, number>;
+  byChannel: Record<string, number>;
+  recentProjects: { id: number; createdAt: string; channel: string | null; cost: number; storyPreview: string }[];
+};
+
+/** Aggregate real API spend (Gemini TTS/script/scenes, Nano Banana, etc. — NOT
+ * the free edge-tts/Pollinations paths, which never call addStoryCost) across
+ * all story_projects, for the cost-monitor dashboard. Lets the user see total
+ * spend before/after switching any channel to paid Gemini TTS or image APIs. */
+export function getCostSummary(): CostSummary {
+  const db = database();
+  const sum = (where: string) =>
+    (db.prepare(`SELECT COALESCE(SUM(api_cost), 0) AS c FROM story_projects ${where}`).get() as { c: number }).c;
+
+  const today = sum(`WHERE date(created_at) = date('now')`);
+  const last7Days = sum(`WHERE date(created_at) >= date('now', '-6 days')`);
+  const last30Days = sum(`WHERE date(created_at) >= date('now', '-29 days')`);
+  const allTime = sum("");
+
+  const rows = db.prepare(
+    `SELECT id, created_at, COALESCE(intended_channel, youtube_channel) AS channel, api_cost, cost_breakdown, story_input
+     FROM story_projects WHERE api_cost > 0 ORDER BY id DESC`
+  ).all() as { id: number; created_at: string; channel: string | null; api_cost: number; cost_breakdown: string | null; story_input: string }[];
+
+  const byStep: Record<string, number> = {};
+  const byChannel: Record<string, number> = {};
+  for (const row of rows) {
+    const breakdown = row.cost_breakdown ? safeParse(row.cost_breakdown) : {};
+    for (const [step, amt] of Object.entries(breakdown)) byStep[step] = (byStep[step] || 0) + amt;
+    const ch = row.channel || "unknown";
+    byChannel[ch] = (byChannel[ch] || 0) + row.api_cost;
+  }
+
+  return {
+    today, last7Days, last30Days, allTime, byStep, byChannel,
+    recentProjects: rows.slice(0, 15).map((r) => ({
+      id: r.id, createdAt: r.created_at, channel: r.channel, cost: r.api_cost, storyPreview: (r.story_input || "").slice(0, 80),
+    })),
+  };
 }
 
 export function getStoryProject(id: number): StoryProjectRow | undefined {
@@ -654,7 +724,7 @@ export function setAutoStorySettings(channel: string, update: Partial<AutoStoryS
 
 // ── Story idea pool (Gemini self-generated premises, no external scraping) ──
 
-export type IdeaGenre = "drama" | "devotional";
+export type IdeaGenre = "drama" | "devotional" | "news";
 export type StoryIdea = { id: number; premise: string; category: string | null };
 
 /** One random unused premise for the given genre, or undefined if that genre's
