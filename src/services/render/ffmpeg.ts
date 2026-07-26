@@ -214,7 +214,7 @@ export function createMockDevotionalBgm(durationSeconds = 600) {
                  0.35 * Math.sin(2 * Math.PI * (freq / 2) * t) +
                  0.15 * Math.sin(2 * Math.PI * (freq * 2) * t);
                  
-    const amplitude = 18 * noteEnv * trackEnv; // Keep it low volume
+    const amplitude = 45 * noteEnv * trackEnv; // Audible under narration, still leaves headroom
     const sampleValue = 128 + Math.round(amplitude * wave);
     buffer.writeUInt8(sampleValue, 44 + i);
   }
@@ -444,7 +444,7 @@ export async function renderVideo(spec: RenderSpec) {
     const mixInputs: string[] = [spec.bgmEnabled ? "[mixed_base]" : "[main_audio]"];
     let filterString = "";
     if (spec.bgmEnabled) {
-      filterString += `[1:a]apad=pad_dur=${Math.max(0, duration - audioDuration).toFixed(3)}[vo_padded];[${bgmInputIndex}:a]volume=0.15[bgm_soft];[vo_padded][bgm_soft]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[mixed_base];`;
+      filterString += `[1:a]apad=pad_dur=${Math.max(0, duration - audioDuration).toFixed(3)}[vo_padded];[${bgmInputIndex}:a]volume=0.35[bgm_soft];[vo_padded][bgm_soft]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[mixed_base];`;
     } else {
       filterString += `[1:a]apad=pad_dur=${Math.max(0, duration - audioDuration).toFixed(3)}[main_audio];`;
     }
@@ -461,7 +461,7 @@ export async function renderVideo(spec: RenderSpec) {
     filterString += `${mixInputs.join("")}amix=inputs=${mixInputs.length}:duration=first:dropout_transition=0:normalize=0[aout]`;
     filterComplex = filterString;
   } else if (spec.bgmEnabled) {
-    filterComplex = `[1:a]apad=pad_dur=${Math.max(0, duration - audioDuration).toFixed(3)}[vo_padded];[${bgmInputIndex}:a]volume=0.15[bgm_soft];[vo_padded][bgm_soft]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]`;
+    filterComplex = `[1:a]apad=pad_dur=${Math.max(0, duration - audioDuration).toFixed(3)}[vo_padded];[${bgmInputIndex}:a]volume=0.35[bgm_soft];[vo_padded][bgm_soft]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]`;
   }
 
   let splitShortsFilter = "";
