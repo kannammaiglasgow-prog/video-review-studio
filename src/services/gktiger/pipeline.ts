@@ -7,7 +7,8 @@ import {
   recordQuizQuestions,
   type GkQuizQuestion,
 } from "@/lib/database";
-import { generateVerifiedQuestions, pickCategory, type GkCategory, type GkDifficulty } from "./questions";
+import { isYoutubeConnected, uploadToYoutube } from "@/services/providers/youtube";
+import { generateVerifiedQuestions, parseManualQuestions, pickCategory, type GkCategory, type GkDifficulty } from "./questions";
 import { renderQuizVideo } from "./render";
 
 const QUESTIONS_PER_VIDEO = 4;
@@ -22,6 +23,14 @@ const MIN_DURATION_SECONDS = 18;
 export type GkGenerateOptions = {
   category?: GkCategory;
   difficulty?: GkDifficulty;
+  /** Upload straight to the GK Tiger channel once the render succeeds. */
+  autoUpload?: boolean;
+  /** Defaults to Private — an unreviewed quiz should not go public by
+   * accident, and the facts are only model-verified (see questions.ts). */
+  privacy?: "private" | "unlisted" | "public";
+  /** Hand-written questions. When supplied, nothing is auto-generated — the
+   * text is structured and fact-checked, but the questions stay the user's. */
+  manualQuestions?: string;
 };
 
 export type GkGenerateResult = {
@@ -33,6 +42,7 @@ export type GkGenerateResult = {
   subtitlePath: string;
   durationSeconds: number;
   warnings: string[];
+  youtubeUrl: string | null;
 };
 
 /** Pre-render sanity checks from the channel brief. Anything in the "fail"
@@ -79,18 +89,33 @@ export async function generateGkTigerVideo(options: GkGenerateOptions = {}): Pro
   const difficulty = options.difficulty || "mixed";
 
   // 1-3. Questions, each independently fact-checked (uncertain ones are
-  // dropped and redrafted; if we can't reach a full set this throws).
+  // dropped; generated sets are redrafted until full, hand-written ones are
+  // used exactly as given minus anything that failed verification).
   const questions: GkQuizQuestion[] = [];
-  while (questions.length < QUESTIONS_PER_VIDEO) {
-    const batch = await generateVerifiedQuestions(category, difficulty);
-    for (const q of batch) {
-      if (questions.length < QUESTIONS_PER_VIDEO && !questions.some((e) => e.question === q.question)) {
-        questions.push(q);
+  const manualWarnings: string[] = [];
+
+  if (options.manualQuestions?.trim()) {
+    const { questions: parsed, rejected } = await parseManualQuestions(options.manualQuestions, category, difficulty);
+    questions.push(...parsed);
+    if (rejected.length > 0) {
+      manualWarnings.push(`${rejected.length} of your question(s) failed fact-verification and were dropped: ${rejected.join(" | ")}`);
+    }
+    if (questions.length === 0) {
+      throw new Error("None of your questions passed fact-verification — nothing was rendered.");
+    }
+  } else {
+    while (questions.length < QUESTIONS_PER_VIDEO) {
+      const batch = await generateVerifiedQuestions(category, difficulty);
+      for (const q of batch) {
+        if (questions.length < QUESTIONS_PER_VIDEO && !questions.some((e) => e.question === q.question)) {
+          questions.push(q);
+        }
       }
     }
   }
 
   const { failures, warnings } = qualityCheck(questions);
+  warnings.unshift(...manualWarnings);
   if (failures.length > 0) {
     throw new Error(`GK Tiger quality check failed — video not rendered:\n- ${failures.join("\n- ")}`);
   }
@@ -127,15 +152,48 @@ export async function generateGkTigerVideo(options: GkGenerateOptions = {}): Pro
       warnings.push(`${questions.length - stored} question(s) were already in the bank — dedup caught a repeat`);
     }
 
+    const description = `${questions.map((q, i) => `${i + 1}. ${q.question}`).join("\n")}\n\nHow many did you get right? Comment your score and follow GK Tiger for more!\n\n#gk #quiz #generalknowledge #shorts #gktiger #trivia`;
+    const tags = ["gk", "quiz", "general knowledge", "trivia", "shorts", "gktiger", category];
+
     updateStoryProject(projectId, {
       status: "rendered",
       output_path: rendered.outputPath,
       audio_duration: rendered.durationSeconds,
       seo_title: title,
-      seo_description: `${questions.map((q, i) => `${i + 1}. ${q.question}`).join("\n")}\n\nHow many did you get right? Comment your score and follow GK Tiger for more!\n\n#gk #quiz #generalknowledge #shorts #gktiger #trivia`,
-      seo_tags: JSON.stringify(["gk", "quiz", "general knowledge", "trivia", "shorts", "gktiger", category]),
+      seo_description: description,
+      seo_tags: JSON.stringify(tags),
       error_message: warnings.length ? warnings.join(" | ") : null,
     });
+
+    let youtubeUrl: string | null = null;
+    if (options.autoUpload) {
+      if (!isYoutubeConnected("gktiger")) {
+        warnings.push("Auto-upload skipped — the GK Tiger YouTube channel is not connected");
+      } else {
+        const privacyStatus = options.privacy ?? "private";
+        try {
+          updateStoryProject(projectId, { status: "rendered" });
+          const result = await uploadToYoutube({
+            filePath: rendered.outputPath,
+            title,
+            description,
+            tags,
+            privacyStatus,
+            language: "en",
+          }, "gktiger");
+          youtubeUrl = `https://youtu.be/${result.videoId}`;
+          updateStoryProject(projectId, {
+            status: "uploaded",
+            youtube_video_id: result.videoId,
+            youtube_url: youtubeUrl,
+            youtube_channel: "gktiger",
+          });
+          console.log(`[GKTiger] uploaded #${projectId} as ${privacyStatus}: ${youtubeUrl}`);
+        } catch (err) {
+          warnings.push(`Auto-upload failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    }
 
     return {
       projectId, category, difficulty, questions,
@@ -143,6 +201,7 @@ export async function generateGkTigerVideo(options: GkGenerateOptions = {}): Pro
       subtitlePath: rendered.subtitlePath,
       durationSeconds: rendered.durationSeconds,
       warnings,
+      youtubeUrl,
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

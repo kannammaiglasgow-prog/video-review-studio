@@ -168,3 +168,65 @@ export async function generateVerifiedQuestions(category: GkCategory, difficulty
   }
   return accepted;
 }
+
+/** Turns free-form typed questions into the same verified structure the
+ * generator produces. The user may write loosely — numbered or not, options
+ * as "A) x" or "A. x", answer as "Answer: B" or "correct: b" — so Gemini
+ * normalises the text rather than us guessing at a brittle regex.
+ *
+ * The answers still go through the SAME independent verification pass as
+ * generated ones: a typo or a wrong key in the input gets caught rather than
+ * shipped. Questions the checker disputes are reported, not silently fixed. */
+export async function parseManualQuestions(
+  raw: string,
+  category: GkCategory,
+  difficulty: GkDifficulty,
+): Promise<{ questions: GkQuizQuestion[]; rejected: string[] }> {
+  const prompt = `Below is a quiz written by hand. Convert it into structured JSON.
+
+For each question found:
+- "question": the question text, cleaned up (no leading numbering).
+- "choiceA" / "choiceB" / "choiceC": exactly three options. If the author gave more than three, keep the correct one plus the two most plausible others. If they gave fewer than three, invent plausible wrong options that are clearly wrong to someone who knows the fact.
+- "correct": "A", "B" or "C" — whichever letter now holds the answer the author marked. If the author did not mark one, work out the correct answer yourself.
+- "explanation": one short interesting sentence (under 100 characters) about the answer. Write one if the author didn't.
+
+Do not change the author's intended meaning. Do not drop questions.
+
+Hand-written quiz:
+${raw}
+
+Return ONLY JSON: {"questions":[{"question":"...","choiceA":"...","choiceB":"...","choiceC":"...","correct":"A|B|C","explanation":"..."}]}`;
+
+  const parsed = await geminiText(prompt, 0.2);
+  const data = parseJson<{ questions?: Partial<GkQuizQuestion>[] }>(parsed);
+  const list = Array.isArray(data.questions) ? data.questions : [];
+
+  const structured: GkQuizQuestion[] = list
+    .filter((q): q is GkQuizQuestion => {
+      const correct = String(q.correct || "").toUpperCase();
+      return Boolean(
+        q.question?.trim() && q.choiceA?.trim() && q.choiceB?.trim() && q.choiceC?.trim() &&
+        (correct === "A" || correct === "B" || correct === "C")
+      );
+    })
+    .map((q) => ({
+      question: q.question.trim(),
+      choiceA: q.choiceA.trim(),
+      choiceB: q.choiceB.trim(),
+      choiceC: q.choiceC.trim(),
+      correct: String(q.correct).toUpperCase() as "A" | "B" | "C",
+      explanation: (q.explanation || "").trim(),
+      category,
+      difficulty,
+    }));
+
+  if (structured.length === 0) {
+    throw new Error("No questions could be read from that text — check the format and try again.");
+  }
+
+  const verified = await verifyQuestions(structured);
+  const keptText = new Set(verified.map((q) => q.question));
+  const rejected = structured.filter((q) => !keptText.has(q.question)).map((q) => q.question);
+
+  return { questions: verified, rejected };
+}

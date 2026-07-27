@@ -107,10 +107,28 @@ function ToggleSwitch({ on, onClick }: { on: boolean; onClick: () => void }) {
 /** GK Tiger quiz generator — picks a category/difficulty, then runs the whole
  * verified-questions → option photos → branded render pipeline. Renders only;
  * uploading stays a deliberate, Private-by-default step below. */
+const MANUAL_PLACEHOLDER = `Write your questions in any reasonable format, e.g.
+
+1. Which planet is the Red Planet?
+A) Mars
+B) Jupiter
+C) Venus
+Answer: A
+
+2. What is the largest ocean?
+A) Atlantic
+B) Pacific
+C) Indian
+Answer: B`;
+
 function GkTigerPanel() {
   const [categories, setCategories] = useState<string[]>([]);
   const [category, setCategory] = useState("");
   const [difficulty, setDifficulty] = useState("mixed");
+  const [manualQuestions, setManualQuestions] = useState("");
+  const [useManual, setUseManual] = useState(false);
+  const [autoUpload, setAutoUpload] = useState(false);
+  const [privacy, setPrivacy] = useState("private");
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<string>("");
 
@@ -128,7 +146,13 @@ function GkTigerPanel() {
       const res = await fetch("/api/gktiger/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ category: category || undefined, difficulty }),
+        body: JSON.stringify({
+          category: category || undefined,
+          difficulty,
+          manualQuestions: useManual && manualQuestions.trim() ? manualQuestions : undefined,
+          autoUpload,
+          privacy,
+        }),
       });
       const data = await res.json();
       if (data.success) {
@@ -169,6 +193,35 @@ function GkTigerPanel() {
         <option value="medium">Medium</option>
         <option value="hard">Hard</option>
       </select>
+
+      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 10, fontSize: 13, color: "#c0c0d8" }}>
+        <input type="checkbox" checked={useManual} onChange={(e) => setUseManual(e.target.checked)} />
+        ✍️ நானே கேள்விகளை எழுதுகிறேன் (Write my own questions)
+      </label>
+      {useManual && (
+        <textarea
+          value={manualQuestions}
+          onChange={(e) => setManualQuestions(e.target.value)}
+          rows={8}
+          placeholder={MANUAL_PLACEHOLDER}
+          style={{ ...selectStyle, resize: "vertical", fontFamily: "inherit" }}
+        />
+      )}
+
+      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 10, fontSize: 13, color: "#c0c0d8" }}>
+        <input type="checkbox" checked={autoUpload} onChange={(e) => setAutoUpload(e.target.checked)} />
+        🚀 Render முடிந்ததும் தானாகவே YouTube-க்கு upload செய்
+      </label>
+      {autoUpload && (
+        <>
+          <label style={{ display: "block", marginBottom: 6, color: "#a0a0c0", fontSize: 13 }}>Privacy</label>
+          <select value={privacy} onChange={(e) => setPrivacy(e.target.value)} style={selectStyle}>
+            <option value="private">🔒 Private (recommended — review first)</option>
+            <option value="unlisted">🔗 Unlisted</option>
+            <option value="public">🌍 Public</option>
+          </select>
+        </>
+      )}
 
       <button
         onClick={generate}

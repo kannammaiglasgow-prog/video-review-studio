@@ -18,9 +18,14 @@ export async function POST(request: Request) {
     const category = GK_CATEGORIES.includes(body.category) ? (body.category as GkCategory) : undefined;
     const difficulty = DIFFICULTIES.includes(body.difficulty) ? (body.difficulty as GkDifficulty) : "mixed";
 
+    const manualQuestions = typeof body.manualQuestions === "string" ? body.manualQuestions : undefined;
+    const autoUpload = body.autoUpload === true;
+    // Private unless explicitly told otherwise — nothing unreviewed goes public.
+    const privacy = body.privacy === "public" ? "public" : body.privacy === "unlisted" ? "unlisted" : "private";
+
     // Awaited rather than fire-and-forget: a run that fails fact-verification
     // must surface that to the caller instead of silently producing nothing.
-    const result = await generateGkTigerVideo({ category, difficulty });
+    const result = await generateGkTigerVideo({ category, difficulty, manualQuestions, autoUpload, privacy });
 
     return NextResponse.json({
       success: true,
@@ -30,7 +35,10 @@ export async function POST(request: Request) {
       durationSeconds: Number(result.durationSeconds.toFixed(2)),
       questions: result.questions.map((q) => ({ question: q.question, correct: q.correct })),
       warnings: result.warnings,
-      message: `GK Tiger Short ready (Project #${result.projectId}) — review it, then upload as Private.`,
+      youtubeUrl: result.youtubeUrl,
+      message: result.youtubeUrl
+        ? `GK Tiger Short uploaded (Project #${result.projectId}): ${result.youtubeUrl}`
+        : `GK Tiger Short ready (Project #${result.projectId}) — review it, then upload.`,
     });
   } catch (error) {
     return NextResponse.json(
