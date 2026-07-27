@@ -122,9 +122,6 @@ export type QuizBrand = {
   voice: string;
   /** edge-tts speaking rate. */
   speechRate: string;
-  /** Stretches the fixed animation slots for languages that read slower than
-   * the English the timeline was tuned against. */
-  paceScale: number;
   /** SVG font stack — Tamil needs an Indic-capable family first. */
   fontStack: string;
   /** Topic pool. Always written in English even for Tamil channels: it steers
@@ -206,10 +203,10 @@ function brand(
     palette: { ...BASE_PALETTE, ...paletteOverride },
     language,
     voice: rest.voice,
-    // Tamil neural voices already read briskly; pushing them as hard as the
-    // English ones slurs the joined consonants.
-    speechRate: tamil ? "+10%" : "+18%",
-    paceScale: tamil ? 1.3 : 1,
+    // Natural reading speed. The timeline is built from the measured length of
+    // each line, so there is no slot to rush the narration into — clear, unhurried
+    // delivery reads better and the video is simply as long as it needs to be.
+    speechRate: "+0%",
     fontStack: tamil ? TAMIL_FONTS : LATIN_FONTS,
     categories: rest.categories,
     persona: rest.persona,

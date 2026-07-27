@@ -8,7 +8,7 @@ import type { GkQuizQuestion } from "@/lib/database";
 import type { QuizBrand } from "./brand";
 import { CANVAS, LAYOUT } from "./template/theme";
 import { renderFrameSvg } from "./template/frame";
-import { buildTimeline, type CuePoint, type QuizSlideData, type SlideTiming, type Timeline } from "./template/timeline";
+import { buildTimeline, ctaForSlide, type CuePoint, type QuizSlideData, type Timeline, type VoTiming } from "./template/timeline";
 import { getMascotDataUri } from "./assets";
 import { downloadSquareImages } from "@/services/providers/pollinations";
 import { searchStockImages } from "@/services/providers/stock-media";
@@ -131,35 +131,73 @@ async function buildOptionImages(
   );
 }
 
-type VoiceLine = { text: string; at: number; path: string };
+/** What a voice-over line belongs to, so its start time can be read off the
+ * timeline once that timeline has been built from the measured durations. */
+type LineRole =
+  | { kind: "question"; slide: number }
+  | { kind: "option"; slide: number; i: number }
+  | { kind: "reveal"; slide: number }
+  | { kind: "cta"; slide: number }
+  | { kind: "score" }
+  | { kind: "thanks" };
 
-/** Voice-over lines, each pinned to the template moment it belongs to — the
- * question as its card lands, each option as it slides in, the answer on the
- * reveal. The template owns the timing; audio is placed into it. */
-function planVoiceLines(b: QuizBrand, timeline: Timeline, workDir: string): VoiceLine[] {
-  const lines: VoiceLine[] = [];
+type PlannedLine = { text: string; path: string; role: LineRole };
+type MeasuredLine = PlannedLine & { duration: number };
+type VoiceLine = { text: string; at: number; path: string; duration: number };
+
+/** The ordered voice-over script: the question, then each answer, then the
+ * reveal (and a CTA after the first two), then the two outro lines. No timings
+ * yet — those come from measuring these clips and laying them out end to end. */
+function planLines(b: QuizBrand, slides: QuizSlideData[], workDir: string): PlannedLine[] {
+  const lines: PlannedLine[] = [];
   const s = b.strings;
   let n = 0;
-  const add = (text: string, at: number) => {
-    lines.push({ text, at, path: path.join(workDir, `v_${String(n++).padStart(3, "0")}.wav`) });
+  const add = (text: string, role: LineRole) => {
+    lines.push({ text, role, path: path.join(workDir, `v_${String(n++).padStart(3, "0")}.wav`) });
   };
 
-  timeline.slides.forEach((slide: SlideTiming) => {
-    const { data } = slide;
-    add(data.question, slide.questionInAt + 0.35);
-    data.answers.forEach((a, i) => add(`${a.letter}. ${a.text}`, slide.optionReadAt[i] + 0.05));
+  slides.forEach((data, si) => {
+    add(data.question, { kind: "question", slide: si });
+    data.answers.forEach((a, i) => add(`${a.letter}. ${a.text}`, { kind: "option", slide: si, i }));
     const correct = data.answers.find((a) => a.letter.toUpperCase() === data.correctAnswer.toUpperCase());
-    add(s.speakReveal(data.correctAnswer, correct?.text ?? ""), slide.revealAt + 0.2);
-    // Like after Q1, subscribe after Q2 — spoken over the matching banner.
-    if (slide.cta && slide.ctaAt !== null) add(s.cta[slide.cta].spoken, slide.ctaAt + 0.15);
+    add(s.speakReveal(data.correctAnswer, correct?.text ?? ""), { kind: "reveal", slide: si });
+    if (ctaForSlide(si)) add(s.cta[ctaForSlide(si)!].spoken, { kind: "cta", slide: si });
   });
 
-  // The outro's two lines are spaced by the same fraction of the (paced) outro
-  // slot the English design used, so a slower language doesn't overlap them.
-  const outroLen = timeline.total - timeline.outroStart;
-  add(s.speakScore, timeline.outroStart + 0.25);
-  add(s.speakThanks, timeline.outroStart + outroLen * 0.4);
+  add(s.speakScore, { kind: "score" });
+  add(s.speakThanks, { kind: "thanks" });
   return lines;
+}
+
+/** Collapses the measured clips into the per-slide + outro duration table the
+ * timeline is built from. */
+function voTimingFrom(slides: QuizSlideData[], measured: MeasuredLine[]): VoTiming {
+  const dur = (pred: (r: LineRole) => boolean) => measured.find((m) => pred(m.role))?.duration ?? 0;
+  return {
+    slides: slides.map((data, si) => ({
+      question: dur((r) => r.kind === "question" && r.slide === si),
+      options: data.answers.map((_, i) => dur((r) => r.kind === "option" && r.slide === si && r.i === i)),
+      reveal: dur((r) => r.kind === "reveal" && r.slide === si),
+      cta: ctaForSlide(si) ? dur((r) => r.kind === "cta" && r.slide === si) : null,
+    })),
+    outroScore: dur((r) => r.kind === "score"),
+    outroThanks: dur((r) => r.kind === "thanks"),
+  };
+}
+
+/** Reads each measured line's start time off the finished timeline. */
+function placeLines(measured: MeasuredLine[], timeline: Timeline): VoiceLine[] {
+  const atFor = (role: LineRole): number => {
+    switch (role.kind) {
+      case "question": return timeline.slides[role.slide].questionReadAt;
+      case "option": return timeline.slides[role.slide].optionReadAt[role.i];
+      case "reveal": return timeline.slides[role.slide].revealReadAt;
+      case "cta": return timeline.slides[role.slide].ctaAt ?? timeline.slides[role.slide].factAt;
+      case "score": return timeline.scoreAt;
+      case "thanks": return timeline.thanksAt;
+    }
+  };
+  return measured.map((m) => ({ text: m.text, path: m.path, duration: m.duration, at: atFor(m.role) }));
 }
 
 /** SRT matching the voice-over exactly — same text, same timings. Shipped as a
@@ -291,16 +329,20 @@ export async function renderQuizVideo(
     await buildOptionImages(slides, options.category, workDir, options.searchTerms);
   }
   options.onPhase?.("rendering");
-  const timeline = buildTimeline(slides, brand.paceScale);
   const mascot = await getMascotDataUri(brand);
 
-  // Voice-over first: each line is measured so the SRT is accurate.
-  const planned = planVoiceLines(brand, timeline, workDir);
-  const lines: (VoiceLine & { duration: number })[] = [];
+  // Voice-over first, at natural reading speed: synthesise and measure every
+  // line, THEN build the timeline from those real durations so nothing is
+  // rushed and no two lines ever overlap.
+  const planned = planLines(brand, slides, workDir);
+  const measured: MeasuredLine[] = [];
   for (const line of planned) {
     await synthesizeAtRate(line.text, line.path, brand.voice, brand.language, brand.speechRate);
-    lines.push({ ...line, duration: await probeAudioDuration(line.path) });
+    measured.push({ ...line, duration: await probeAudioDuration(line.path) });
   }
+
+  const timeline = buildTimeline(slides, voTimingFrom(slides, measured));
+  const lines = placeLines(measured, timeline);
 
   const [frameCount, audioPath] = await Promise.all([
     renderFrames(brand, timeline, framesDir, mascot),

@@ -18,11 +18,10 @@ import { renderQuizVideo } from "./render";
 
 /** Time the viewer gets to choose once all options have been read. */
 const COUNTDOWN_SECONDS = 3;
-/** Four questions each holding a full countdown cannot fit the original
- * 20-35s brief; YouTube Shorts accepts up to 3 minutes, so this is the
- * practical ceiling for the approved template. Channels that read slower get
- * the same allowance scaled by the factor their timeline is paced with. */
-const BASE_MAX_DURATION_SECONDS = 75;
+/** The video is now as long as the narration needs (read at natural speed,
+ * strictly one line at a time), so duration isn't engineered — we only warn if
+ * it would break YouTube's 3-minute Shorts ceiling, or come out oddly short. */
+const MAX_DURATION_SECONDS = 180;
 const MIN_DURATION_SECONDS = 18;
 
 export type QuizGenerateOptions = {
@@ -205,7 +204,7 @@ export async function generateQuizVideo(
   // request (or a random topic) only when generating fresh.
   const category = options.category?.trim() || approved[0]?.category || pickCategoryFor(brand);
   const difficulty: GkDifficulty = options.difficulty || asDifficulty(approved[0]?.difficulty);
-  const maxDuration = BASE_MAX_DURATION_SECONDS * brand.paceScale;
+  const maxDuration = MAX_DURATION_SECONDS;
 
   // 1-3. Either render the exact set the user approved, or generate + fact-check
   // a fresh one (uncertain questions dropped; generated sets redrafted until

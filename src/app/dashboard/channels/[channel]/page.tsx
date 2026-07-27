@@ -174,9 +174,14 @@ function QuizPanel({ channel }: { channel: string }) {
 
   // Any change to what the questions would be drawn from makes an existing
   // preview stale, so drop it — the user must preview again before rendering.
-  useEffect(() => {
-    setPreview(null);
-  }, [category, difficulty, mode, sourceMaterial, manualQuestions]);
+  // Done during render (React's endorsed "reset on input change" pattern)
+  // rather than in an effect, which would cause an extra cascading render.
+  const inputSig = `${category}|${difficulty}|${mode}|${sourceMaterial}|${manualQuestions}`;
+  const [seenSig, setSeenSig] = useState(inputSig);
+  if (inputSig !== seenSig) {
+    setSeenSig(inputSig);
+    if (preview !== null) setPreview(null);
+  }
 
   const requestBody = () => ({
     category: category || undefined,
