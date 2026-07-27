@@ -31,8 +31,13 @@ function dimensionsFor(orientation: "portrait" | "landscape"): { width: number; 
   return orientation === "portrait" ? { width: 768, height: 1365 } : { width: 1365, height: 768 };
 }
 
-async function generateOneImage(prompt: string, orientation: "portrait" | "landscape", seed: number): Promise<Buffer> {
-  const { width, height } = dimensionsFor(orientation);
+async function generateOneImage(
+  prompt: string,
+  orientation: "portrait" | "landscape",
+  seed: number,
+  dims?: { width: number; height: number },
+): Promise<Buffer> {
+  const { width, height } = dims ?? dimensionsFor(orientation);
   const url = `${POLLINATIONS_BASE}/${encodeURIComponent(prompt)}?width=${width}&height=${height}&nologo=true&seed=${seed}`;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -101,6 +106,54 @@ export async function downloadScenedAIMedia(scenePrompts: string[], orientation:
   }
 
   return { files };
+}
+
+/** Square images written to caller-chosen paths — used by the GK Tiger quiz
+ * renderer, which needs one picture per answer option rather than one per
+ * scene. Same pacing/backoff as the scene path (shared generateOneImage), so
+ * a quiz video's dozen images don't trip the free tier's rate limit. */
+export async function downloadSquareImages(
+  prompts: string[],
+  size: number,
+  filePaths: string[],
+): Promise<(string | null)[]> {
+  const out: (string | null)[] = new Array(prompts.length).fill(null);
+
+  const attempt = async (i: number, seedOffset: number): Promise<boolean> => {
+    try {
+      const data = await generateOneImage(prompts[i], "portrait", 2000 + i + seedOffset, { width: size, height: size });
+      const type = detectImageType(data)!;
+      const target = `${filePaths[i]}${imageExtension(type)}`;
+      await fs.writeFile(target, data);
+      out[i] = target;
+      return true;
+    } catch (err) {
+      console.error(`[Pollinations] square image ${i} failed:`, err instanceof Error ? err.message : err);
+      return false;
+    }
+  };
+
+  for (let i = 0; i < prompts.length; i += 1) {
+    if (i > 0) await sleep(REQUEST_GAP_MS);
+    await attempt(i, 0);
+  }
+
+  // A dozen images in one run leans hard on the free tier's limiter — a live
+  // 12-image quiz run lost 8 of them to 429s on the first pass. Sweep the
+  // stragglers a couple more times after a cooldown, which is what actually
+  // gets a full set.
+  for (let sweep = 1; sweep <= 2; sweep += 1) {
+    const missing = out.map((f, i) => (f === null ? i : -1)).filter((i) => i >= 0);
+    if (missing.length === 0) break;
+    console.log(`[Pollinations] sweep ${sweep}: retrying ${missing.length} image(s) after cooldown`);
+    await sleep(FINAL_SWEEP_COOLDOWN_MS);
+    for (const i of missing) {
+      await attempt(i, sweep * 500);
+      await sleep(REQUEST_GAP_MS);
+    }
+  }
+
+  return out;
 }
 
 /** A prompt Pollinations keeps failing/429-ing on sometimes succeeds once

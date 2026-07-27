@@ -55,6 +55,7 @@ const channelOptions = [
   { value: "devotional", label: "Sivan Arul (Devotional)" },
   { value: "sanatana", label: "Sanatana Spirit (English)" },
   { value: "news", label: "Tamil Politics Star (News)" },
+  { value: "gktiger", label: "GK Tiger (Quiz)" },
 ];
 
 const statusLabels: Record<string, string> = {

@@ -19,7 +19,7 @@ export function isYoutubeConfigured() {
   return Boolean(config.youtubeOAuth.clientId && config.youtubeOAuth.clientSecret);
 }
 
-export type ChannelType = "news" | "devotional" | "sanatana" | "story" | "english" | "food";
+export type ChannelType = "news" | "devotional" | "sanatana" | "story" | "english" | "food" | "gktiger";
 
 // Expected channel id for the English-stories channel (used to verify the right
 // brand channel was connected during OAuth):
@@ -41,6 +41,9 @@ function getTokenPath(channelType?: ChannelType) {
   }
   if (channelType === "food") {
     return path.resolve(process.cwd(), "data/youtube-oauth-food.json");
+  }
+  if (channelType === "gktiger") {
+    return path.resolve(process.cwd(), "data/youtube-oauth-gktiger.json");
   }
   return config.youtubeOAuth.tokenPath;
 }

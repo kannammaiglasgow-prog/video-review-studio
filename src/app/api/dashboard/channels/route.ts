@@ -12,6 +12,7 @@ export const CHANNELS: { key: ChannelType; label: string }[] = [
   { key: "devotional", label: "Sivan Arul (Devotional)" },
   { key: "sanatana", label: "Sanatana Spirit (English)" },
   { key: "news", label: "Tamil Politics Star (News)" },
+  { key: "gktiger", label: "GK Tiger (Quiz)" },
 ];
 
 // GET → at-a-glance summary for every channel, for the home dashboard grid.

@@ -1,0 +1,170 @@
+import { geminiText, parseJson } from "@/services/story/generator";
+import { getUsedQuizQuestions, isQuizQuestionUsed, type GkQuizQuestion } from "@/lib/database";
+
+export const GK_CATEGORIES = [
+  "animals and nature",
+  "science",
+  "space",
+  "geography",
+  "history",
+  "human body",
+  "food",
+  "technology",
+  "world records",
+  "famous landmarks",
+  "mixed general knowledge",
+] as const;
+
+export type GkCategory = (typeof GK_CATEGORIES)[number];
+export type GkDifficulty = "easy" | "medium" | "hard" | "mixed";
+
+export function pickCategory(): GkCategory {
+  return GK_CATEGORIES[Math.floor(Math.random() * GK_CATEGORIES.length)];
+}
+
+const difficultyGuidance: Record<GkDifficulty, string> = {
+  easy: "Easy — most adults would know this without thinking hard.",
+  medium: "Medium — a well-read person knows it, others will have to guess.",
+  hard: "Hard — genuinely challenging, but still a famous/checkable fact, never obscure trivia.",
+  mixed: "Mix the three questions across easy, medium and hard difficulty.",
+};
+
+/** Step 1: invent three original multiple-choice questions. The already-used
+ * list is passed in so the model doesn't re-tread ground; the DB's UNIQUE
+ * constraint is the real backstop (see recordQuizQuestions). */
+async function draftQuestions(category: GkCategory, difficulty: GkDifficulty): Promise<GkQuizQuestion[]> {
+  const used = getUsedQuizQuestions(200);
+  const avoidBlock = used.length
+    ? `\n\nALREADY USED — do not repeat these or ask the same fact in different words:\n${used.slice(0, 120).map((q) => `- ${q}`).join("\n")}`
+    : "";
+
+  const prompt = `You are a quiz writer for a fast-paced English general-knowledge Shorts channel with a broad international audience.
+
+Write exactly 3 original multiple-choice questions in the category: ${category}.
+Difficulty: ${difficultyGuidance[difficulty]}
+
+Rules for EVERY question:
+- The answer must be an objective, well-established, uncontested fact. No opinions, no "most people think", no records that change yearly, no anything disputed between reliable sources.
+- Exactly 3 answer choices, labelled A, B and C. Exactly one is correct.
+- The two wrong choices must be plausible but clearly wrong to someone who knows the fact — never a second defensible answer.
+- Question text must be under 90 characters so it stays readable on a phone screen.
+- Each answer choice must be under 28 characters.
+- Write in simple, clear international English. No idioms, no region-specific slang.
+- Add a one-sentence "explanation" (under 100 characters) giving the interesting reason/context behind the answer.
+- The three questions must be about clearly different things.${avoidBlock}
+
+Return ONLY JSON:
+{"questions":[{"question":"...","choiceA":"...","choiceB":"...","choiceC":"...","correct":"A|B|C","explanation":"..."}]} — exactly 3 entries.`;
+
+  const raw = await geminiText(prompt, 1.0);
+  const data = parseJson<{ questions?: Partial<GkQuizQuestion>[] }>(raw);
+  const list = Array.isArray(data.questions) ? data.questions : [];
+
+  return list
+    .filter((q): q is GkQuizQuestion => {
+      const correct = String(q.correct || "").toUpperCase();
+      return Boolean(
+        q.question?.trim() && q.choiceA?.trim() && q.choiceB?.trim() && q.choiceC?.trim() &&
+        (correct === "A" || correct === "B" || correct === "C")
+      );
+    })
+    .map((q) => ({
+      question: q.question.trim(),
+      choiceA: q.choiceA.trim(),
+      choiceB: q.choiceB.trim(),
+      choiceC: q.choiceC.trim(),
+      correct: String(q.correct).toUpperCase() as "A" | "B" | "C",
+      explanation: (q.explanation || "").trim(),
+      category,
+      difficulty,
+    }));
+}
+
+type VerdictRow = { index: number; verified: boolean; correct?: string; reason?: string };
+
+/** Step 2: independent check. Deliberately a SEPARATE, low-temperature call
+ * that is shown only the question + choices (never which answer the writer
+ * intended) so it can't just agree with itself — it must independently pick
+ * the answer, and we only keep questions where it both picks the same letter
+ * and reports the fact as uncontested.
+ *
+ * IMPORTANT LIMITATION: this is model self-verification, not a lookup against
+ * a cited source — it filters out uncertainty and obvious errors, but is not
+ * a substitute for a human sanity-check before anything goes public. That's
+ * why uploads are forced to Private. */
+async function verifyQuestions(questions: GkQuizQuestion[]): Promise<GkQuizQuestion[]> {
+  if (questions.length === 0) return [];
+
+  const prompt = `You are a strict fact-checker. For each quiz question below, independently work out the correct answer. You have NOT been told which answer the writer intended — decide for yourself.
+
+For each question return:
+- "index": the question's number as given.
+- "correct": the letter (A, B or C) you independently believe is correct.
+- "verified": true ONLY if ALL of these hold:
+  * You are certain of the answer as a well-established fact.
+  * Reliable sources agree — the fact is not disputed, not approximate, and does not change over time.
+  * Exactly one of the three choices is defensible as correct.
+  Otherwise return false.
+- "reason": a short note (under 80 characters) — if verified is false, say why.
+
+Be conservative. If you are not sure, return "verified": false.
+
+Questions:
+${questions.map((q, i) => `${i + 1}. ${q.question}\n   A: ${q.choiceA}\n   B: ${q.choiceB}\n   C: ${q.choiceC}`).join("\n\n")}
+
+Return ONLY JSON: {"verdicts":[{"index":1,"correct":"A","verified":true,"reason":"..."}]}`;
+
+  const raw = await geminiText(prompt, 0.1);
+  const data = parseJson<{ verdicts?: VerdictRow[] }>(raw);
+  const verdicts = Array.isArray(data.verdicts) ? data.verdicts : [];
+
+  const kept: GkQuizQuestion[] = [];
+  questions.forEach((q, i) => {
+    const verdict = verdicts.find((v) => Number(v.index) === i + 1);
+    if (!verdict) {
+      console.log(`[GKTiger] rejected "${q.question}" — no verdict returned`);
+      return;
+    }
+    if (!verdict.verified) {
+      console.log(`[GKTiger] rejected "${q.question}" — not verified: ${verdict.reason || "unspecified"}`);
+      return;
+    }
+    if (String(verdict.correct || "").toUpperCase() !== q.correct) {
+      console.log(`[GKTiger] rejected "${q.question}" — checker said ${verdict.correct}, writer said ${q.correct}`);
+      return;
+    }
+    kept.push(q);
+  });
+
+  return kept;
+}
+
+/** Produces exactly 3 fresh, verified, non-duplicate questions, or throws.
+ * Retries with new drafts when verification/dedup thins the batch — never
+ * pads the set with anything unverified. */
+export async function generateVerifiedQuestions(category: GkCategory, difficulty: GkDifficulty): Promise<GkQuizQuestion[]> {
+  const accepted: GkQuizQuestion[] = [];
+  const seenThisRun = new Set<string>();
+
+  for (let attempt = 0; attempt < 4 && accepted.length < 3; attempt += 1) {
+    const drafted = await draftQuestions(category, difficulty);
+    const fresh = drafted.filter((q) => {
+      const norm = q.question.toLowerCase().trim();
+      if (seenThisRun.has(norm) || isQuizQuestionUsed(q.question)) return false;
+      seenThisRun.add(norm);
+      return true;
+    });
+    const verified = await verifyQuestions(fresh);
+    for (const q of verified) {
+      if (accepted.length < 3) accepted.push(q);
+    }
+    if (accepted.length < 3) {
+      console.log(`[GKTiger] attempt ${attempt + 1}: ${accepted.length}/3 verified so far, retrying`);
+    }
+  }
+
+  if (accepted.length < 3) {
+    throw new Error(`Only ${accepted.length}/3 questions passed fact-verification — video not generated (answers must be certain).`);
+  }
+  return accepted;
+}

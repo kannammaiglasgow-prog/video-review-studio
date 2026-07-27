@@ -29,6 +29,29 @@ function run(cmd: string, args: string[]): Promise<void> {
   });
 }
 
+/** Same as the provider below, but with an explicit speaking rate (e.g. "+25%")
+ * — used by the GK Tiger quiz renderer, where a punchy delivery is what keeps
+ * a 4-question Short inside the 60s Shorts ceiling. */
+export async function synthesizeAtRate(
+  text: string,
+  outputPath: string,
+  voice: string,
+  language: OutputLanguage,
+  rate: string,
+): Promise<void> {
+  const chosen = pickVoice(voice, language);
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "edge-tts-"));
+  const txtFile = path.join(tmpDir, "text.txt");
+  const mp3File = path.join(tmpDir, "out.mp3");
+  try {
+    await fs.writeFile(txtFile, text, "utf8");
+    await run("python", ["-m", "edge_tts", "--voice", chosen, "--rate", rate, "--file", txtFile, "--write-media", mp3File]);
+    await run(config.ffmpegPath, ["-hide_banner", "-loglevel", "error", "-y", "-i", mp3File, outputPath]);
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 export const edgeSpeechProvider: SpeechProvider = {
   async synthesize(text, outputPath, voice, language = "ta") {
     const chosen = pickVoice(voice, language);

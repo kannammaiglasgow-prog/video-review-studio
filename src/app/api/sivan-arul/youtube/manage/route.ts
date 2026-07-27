@@ -4,7 +4,7 @@ import { disconnectYoutube, isYoutubeConnected, youtubeChannelInfo, ENGLISH_CHAN
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const VALID: ChannelType[] = ["news", "devotional", "sanatana", "story", "english", "food"];
+const VALID: ChannelType[] = ["news", "devotional", "sanatana", "story", "english", "food", "gktiger"];
 
 function parseChannel(requestUrl: string): ChannelType {
   const c = new URL(requestUrl).searchParams.get("channel") || "";

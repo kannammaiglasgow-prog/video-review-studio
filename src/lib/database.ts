@@ -420,6 +420,72 @@ function migrate(db: DatabaseSync) {
     WHERE channel = 'devotional' AND shorts_times = '["09:00","10:30","12:00","13:30","15:00","16:30","18:00","19:30","21:00","22:30"]'
   `);
   db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (32, 'auto_story_devotional_quality_over_quantity')");
+
+  // GK Tiger quiz channel — a bank of verified GK questions so the same one is
+  // never reused across videos. `question` is UNIQUE so an accidental repeat
+  // from the generator is rejected at insert time rather than silently
+  // shipping a duplicate. Videos themselves are ordinary story_projects rows
+  // (intended_channel='gktiger'), so the dashboard/upload/cost plumbing all
+  // works unchanged.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS gk_quiz_questions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      question TEXT NOT NULL UNIQUE,
+      choice_a TEXT NOT NULL,
+      choice_b TEXT NOT NULL,
+      choice_c TEXT NOT NULL,
+      correct TEXT NOT NULL,
+      explanation TEXT,
+      category TEXT NOT NULL,
+      difficulty TEXT NOT NULL DEFAULT 'mixed',
+      story_id INTEGER,
+      used_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  db.exec("INSERT OR IGNORE INTO auto_story_settings (channel, enabled, times, shorts_times) VALUES ('gktiger', 0, '[\"10:00\"]', '[\"09:00\",\"15:00\",\"20:00\"]')");
+  db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (33, 'gk_tiger_quiz')");
+}
+
+export type GkQuizQuestion = {
+  question: string;
+  choiceA: string;
+  choiceB: string;
+  choiceC: string;
+  correct: "A" | "B" | "C";
+  explanation: string;
+  category: string;
+  difficulty: string;
+};
+
+/** Lower-cased, punctuation-stripped question text of everything already used —
+ * the generator is told to avoid these, and insertion is UNIQUE-guarded too. */
+export function getUsedQuizQuestions(limit = 400): string[] {
+  const db = database();
+  const rows = db.prepare("SELECT question FROM gk_quiz_questions ORDER BY id DESC LIMIT ?").all(limit) as { question: string }[];
+  return rows.map((r) => r.question);
+}
+
+export function isQuizQuestionUsed(question: string): boolean {
+  const db = database();
+  const row = db.prepare("SELECT 1 AS x FROM gk_quiz_questions WHERE lower(trim(question)) = lower(trim(?))").get(question);
+  return Boolean(row);
+}
+
+/** Records the three questions actually used in a rendered video. Returns how
+ * many were newly stored — a caller seeing fewer than it passed knows a
+ * duplicate slipped through generation and can fail the run. */
+export function recordQuizQuestions(questions: GkQuizQuestion[], storyId: number): number {
+  const db = database();
+  const stmt = db.prepare(
+    `INSERT OR IGNORE INTO gk_quiz_questions (question, choice_a, choice_b, choice_c, correct, explanation, category, difficulty, story_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+  let inserted = 0;
+  for (const q of questions) {
+    const result = stmt.run(q.question, q.choiceA, q.choiceB, q.choiceC, q.correct, q.explanation, q.category, q.difficulty, storyId);
+    if (result.changes > 0) inserted += 1;
+  }
+  return inserted;
 }
 
 export function database() {

@@ -94,6 +94,91 @@ function ToggleSwitch({ on, onClick }: { on: boolean; onClick: () => void }) {
   );
 }
 
+/** GK Tiger quiz generator — picks a category/difficulty, then runs the whole
+ * verified-questions → option photos → branded render pipeline. Renders only;
+ * uploading stays a deliberate, Private-by-default step below. */
+function GkTigerPanel() {
+  const [categories, setCategories] = useState<string[]>([]);
+  const [category, setCategory] = useState("");
+  const [difficulty, setDifficulty] = useState("mixed");
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<string>("");
+
+  useEffect(() => {
+    fetch("/api/gktiger/generate")
+      .then((r) => r.json())
+      .then((d) => setCategories(d.categories || []))
+      .catch(() => {});
+  }, []);
+
+  const generate = async () => {
+    setBusy(true);
+    setResult("⏳ Questions verify ஆகி, படங்கள் generate ஆகி, video render ஆகுது — சில நிமிடம் ஆகும்...");
+    try {
+      const res = await fetch("/api/gktiger/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ category: category || undefined, difficulty }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        const warn = data.warnings?.length ? `\n⚠️ ${data.warnings.join(" | ")}` : "";
+        setResult(`✅ Project #${data.projectId} — ${data.durationSeconds}s, ${data.category}${warn}`);
+      } else {
+        setResult(`❌ ${data.error}`);
+      }
+    } catch {
+      setResult("❌ Generation தோல்வி — server log பாருங்கள்");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const selectStyle: React.CSSProperties = {
+    width: "100%", padding: "10px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.15)",
+    background: "#0f0f1e", color: "#fff", fontSize: 13, marginBottom: 14,
+  };
+
+  return (
+    <div style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(245,124,31,0.35)", borderRadius: 14, padding: 18, marginBottom: 20 }}>
+      <h2 style={{ fontSize: 15, fontWeight: 700, marginTop: 0, marginBottom: 4 }}>🐯 GK Tiger Quiz Generator</h2>
+      <div style={{ fontSize: 12, color: "#a0a0c0", marginBottom: 14 }}>
+        4 கேள்விகள் · A/B/C + படம் · 3-2-1 countdown · 1080×1920. ஒவ்வொரு பதிலும் தனி fact-check pass-ல் verify ஆகும் — உறுதியில்லாத கேள்வி நிராகரிக்கப்படும்.
+      </div>
+
+      <label style={{ display: "block", marginBottom: 6, color: "#a0a0c0", fontSize: 13 }}>Category</label>
+      <select value={category} onChange={(e) => setCategory(e.target.value)} style={selectStyle}>
+        <option value="">🎲 Random</option>
+        {categories.map((c) => <option key={c} value={c}>{c}</option>)}
+      </select>
+
+      <label style={{ display: "block", marginBottom: 6, color: "#a0a0c0", fontSize: 13 }}>Difficulty</label>
+      <select value={difficulty} onChange={(e) => setDifficulty(e.target.value)} style={selectStyle}>
+        <option value="mixed">Mixed (default)</option>
+        <option value="easy">Easy</option>
+        <option value="medium">Medium</option>
+        <option value="hard">Hard</option>
+      </select>
+
+      <button
+        onClick={generate}
+        disabled={busy}
+        style={{
+          padding: "12px 22px", borderRadius: 10, border: "none", cursor: busy ? "not-allowed" : "pointer",
+          background: busy ? "rgba(255,255,255,0.1)" : "linear-gradient(90deg, #F57C1F, #FFC93C)",
+          color: busy ? "#707090" : "#101014", fontSize: 14, fontWeight: 700,
+        }}
+      >
+        {busy ? "⏳ Generate ஆகுது..." : "🐯 Quiz Short உருவாக்கு"}
+      </button>
+
+      {result && (
+        <div style={{ marginTop: 12, fontSize: 13, color: "#c0c0d8", whiteSpace: "pre-wrap" }}>{result}</div>
+      )}
+    </div>
+  );
+}
+
 function IdeaEngineAutomation({ channel }: { channel: "story" | "english" | "devotional" | "news" }) {
   const [enabled, setEnabled] = useState(false);
   const [times, setTimes] = useState<string[]>([]);
@@ -337,7 +422,7 @@ export default function ChannelDetailPage() {
               🤖 Automation
             </Link>
           )}
-          {channel !== "news" && channel !== "story" && channel !== "english" && channel !== "devotional" && (
+          {channel !== "news" && channel !== "story" && channel !== "english" && channel !== "devotional" && channel !== "gktiger" && (
             <span
               title="இந்த channel-க்கு automation இன்னும் கட்டப்படவில்லை"
               style={{
@@ -351,6 +436,8 @@ export default function ChannelDetailPage() {
         </div>
 
         {(channel === "story" || channel === "english" || channel === "devotional" || channel === "news") && <IdeaEngineAutomation channel={channel} />}
+
+        {channel === "gktiger" && <GkTigerPanel />}
 
         {/* Currently in progress */}
         <div style={box}>
