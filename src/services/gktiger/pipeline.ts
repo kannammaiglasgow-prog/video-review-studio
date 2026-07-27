@@ -11,8 +11,8 @@ import { generateVerifiedQuestions, pickCategory, type GkCategory, type GkDiffic
 import { renderQuizVideo } from "./render";
 
 const QUESTIONS_PER_VIDEO = 4;
-/** Time the viewer gets to choose, per the approved design's timer. */
-const COUNTDOWN_SECONDS = 10;
+/** Time the viewer gets to choose once all options have been read. */
+const COUNTDOWN_SECONDS = 3;
 /** Four questions each holding a full 10s countdown cannot fit the original
  * 20-35s brief; YouTube Shorts accepts up to 3 minutes, so this is the
  * practical ceiling for the approved template. */

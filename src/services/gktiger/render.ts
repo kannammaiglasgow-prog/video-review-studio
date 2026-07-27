@@ -7,9 +7,10 @@ import { synthesizeAtRate } from "@/services/providers/edge-tts";
 import type { GkQuizQuestion } from "@/lib/database";
 import { CANVAS, LAYOUT } from "./template/theme";
 import { renderFrameSvg } from "./template/frame";
-import { buildTimeline, type CuePoint, type QuizSlideData, type SlideTiming, type Timeline } from "./template/timeline";
+import { buildTimeline, CTA_TEXT, type CuePoint, type QuizSlideData, type SlideTiming, type Timeline } from "./template/timeline";
 import { getMascotDataUri } from "./assets";
 import { downloadSquareImages } from "@/services/providers/pollinations";
+import { searchStockImages } from "@/services/providers/stock-media";
 
 /** Energetic quiz-show delivery. Lines are fitted into the template's fixed
  * animation slots, so this mainly controls how natural the reads sound. */
@@ -75,7 +76,39 @@ async function buildOptionImages(
     });
   });
 
-  const files = await downloadSquareImages(prompts, 320, targets);
+  // Free stock first (real photos, instant, no rate limit); anything stock
+  // can't cover falls back to an AI illustration.
+  const files: (string | null)[] = new Array(prompts.length).fill(null);
+  await Promise.all(
+    index.map(async (ref, i) => {
+      const term = slides[ref.slide].answers[ref.option].text;
+      try {
+        const hits = await searchStockImages(term, "landscape", 3);
+        for (const hit of hits) {
+          const res = await fetch(hit.url, { signal: AbortSignal.timeout(20_000) });
+          if (!res.ok) continue;
+          const buf = Buffer.from(await res.arrayBuffer());
+          const file = `${targets[i]}.jpg`;
+          await fs.writeFile(file, buf);
+          files[i] = file;
+          break;
+        }
+      } catch {
+        // fall through to AI
+      }
+    }),
+  );
+
+  const missing = files.map((f, i) => (f === null ? i : -1)).filter((i) => i >= 0);
+  if (missing.length > 0) {
+    console.log(`[GKTiger] ${missing.length}/${prompts.length} option images not on stock — generating with AI`);
+    const generated = await downloadSquareImages(
+      missing.map((i) => prompts[i]),
+      320,
+      missing.map((i) => targets[i]),
+    );
+    missing.forEach((target, k) => { files[target] = generated[k]; });
+  }
 
   await Promise.all(
     files.map(async (file, i) => {
@@ -109,12 +142,15 @@ function planVoiceLines(timeline: Timeline, workDir: string): VoiceLine[] {
   timeline.slides.forEach((slide: SlideTiming) => {
     const { data } = slide;
     add(data.question, slide.questionInAt + 0.35);
-    data.answers.forEach((a, i) => add(`${a.letter}. ${a.text}`, slide.optionAt[i] + 0.05));
+    data.answers.forEach((a, i) => add(`${a.letter}. ${a.text}`, slide.optionReadAt[i] + 0.05));
     const correct = data.answers.find((a) => a.letter.toUpperCase() === data.correctAnswer.toUpperCase());
-    add(`It's ${data.correctAnswer}. ${correct?.text ?? ""}!`, slide.revealAt + 0.25);
+    add(`It's ${data.correctAnswer}. ${correct?.text ?? ""}!`, slide.revealAt + 0.2);
+    // Like after Q1, subscribe after Q2 — spoken over the matching banner.
+    if (slide.cta && slide.ctaAt !== null) add(CTA_TEXT[slide.cta].spoken, slide.ctaAt + 0.15);
   });
 
-  add("How many did you get right? Comment your score and follow GK Tiger!", timeline.outroStart + 0.3);
+  add("How many did you get right? Comment your score below!", timeline.outroStart + 0.25);
+  add("Thanks for watching! Share this with your favourite person in the world.", timeline.outroStart + 3.0);
   return lines;
 }
 

@@ -4,7 +4,7 @@
  * it needs plus an animation progress value, so the same components compose
  * every frame of every video — only the quiz data changes. */
 
-import { CANVAS, COLOR, LAYOUT, esc, fitText, optionY, clamp01, easeOutBack, easeOutCubic } from "./theme";
+import { CANVAS, COLOR, LAYOUT, esc, fitText, optionY, easeOutBack, easeOutCubic } from "./theme";
 
 /** Gradient/filter definitions shared by every component. Emitted once per frame. */
 export function defs(): string {
@@ -25,6 +25,10 @@ export function defs(): string {
   <linearGradient id="optGrad" x1="0" y1="0" x2="0" y2="1">
     <stop offset="0%" stop-color="${COLOR.optionTop}"/>
     <stop offset="100%" stop-color="${COLOR.optionBottom}"/>
+  </linearGradient>
+  <linearGradient id="readingGrad" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%" stop-color="#5566ff"/>
+    <stop offset="100%" stop-color="#3a3ac4"/>
   </linearGradient>
   <linearGradient id="correctGrad" x1="0" y1="0" x2="0" y2="1">
     <stop offset="0%" stop-color="${COLOR.correctTop}"/>
@@ -154,7 +158,7 @@ export function questionCard(question: string, enter: number): string {
 </g>`;
 }
 
-export type AnswerState = "hidden" | "idle" | "correct" | "dimmed";
+export type AnswerState = "hidden" | "idle" | "reading" | "correct" | "dimmed";
 
 /** One answer option. Handles the idle blue/purple state, the turquoise
  * correct state with checkmark + "CORRECT!", and the dimmed non-answers. */
@@ -171,12 +175,13 @@ export function answerOption(
   const { optionX, optionW, optionH } = LAYOUT;
   const y = optionY(index);
   const e = easeOutBack(enter);
-  const offsetX = (1 - clamp01(enter)) * -120;
   const isCorrect = state === "correct";
+  const isReading = state === "reading";
   const opacity = state === "dimmed" ? 0.82 : 1;
 
-  const fillId = isCorrect ? "correctGrad" : "optGrad";
-  const stroke = isCorrect ? COLOR.correctStroke : COLOR.optionStroke;
+  const fillId = isCorrect ? "correctGrad" : isReading ? "readingGrad" : "optGrad";
+  const stroke = isCorrect ? COLOR.correctStroke : isReading ? COLOR.cyan : COLOR.optionStroke;
+  const strokeW = isReading ? 7 : 4;
 
   // Letter badge — angled right edge, matching the mockup's hexagon look.
   const badgeW = 168;
@@ -213,9 +218,10 @@ export function answerOption(
   <text x="${optionX + optionW - 108}" y="${y + optionH / 2 + 58}" font-family="Arial, Helvetica, sans-serif" font-size="24" font-weight="bold" fill="${COLOR.white}" text-anchor="middle" letter-spacing="1">CORRECT!</text>`
     : "";
 
-  return `<g opacity="${opacity}" transform="translate(${offsetX.toFixed(1)} 0) scale(${(0.97 + 0.03 * e).toFixed(3)}) translate(${((1 - (0.97 + 0.03 * e)) * CANVAS.width / 2 / (0.97 + 0.03 * e)).toFixed(1)} 0)">
+  const scale = isReading ? 1.015 : 0.985 + 0.015 * e;
+  return `<g opacity="${opacity}" transform="translate(${(CANVAS.width * (1 - scale) / 2).toFixed(1)} ${(y * (1 - scale)).toFixed(1)}) scale(${scale.toFixed(4)})">
   <g filter="url(#cardShadow)">
-    <rect x="${optionX}" y="${y}" width="${optionW}" height="${optionH}" rx="26" fill="url(#${fillId})" stroke="${stroke}" stroke-width="4"/>
+    <rect x="${optionX}" y="${y}" width="${optionW}" height="${optionH}" rx="26" fill="url(#${fillId})" stroke="${stroke}" stroke-width="${strokeW}"/>
   </g>
   <path d="${badgePath}" fill="${isCorrect ? COLOR.correctBottom : "url(#badgeGrad)"}" stroke="${COLOR.white}" stroke-opacity="0.5" stroke-width="3"/>
   <text x="${optionX + (badgeW - notch) / 2 + 4}" y="${y + optionH / 2 + 22}" font-family="Arial, Helvetica, sans-serif" font-size="66" font-weight="bold" fill="${COLOR.white}" text-anchor="middle">${esc(letter)}</text>
@@ -265,20 +271,54 @@ export function footer(): string {
 <text x="${CANVAS.width / 2}" y="${y}" font-family="Arial, Helvetica, sans-serif" font-size="30" font-weight="bold" fill="${COLOR.footer}" text-anchor="middle" letter-spacing="7">NEW QUIZ EVERY DAY</text>`;
 }
 
-/** Full-screen closing card. */
+/** Call-to-action banner shown after a question — "tap like" / "subscribe". */
+export function ctaBanner(kind: "like" | "subscribe", heading: string, sub: string, enter: number): string {
+  if (enter <= 0.01) return "";
+  const e = easeOutCubic(enter);
+  const { factX, factW } = LAYOUT;
+  const y = LAYOUT.factY;
+  const h = 232;
+  const cx = factX + 132, cy = y + h / 2;
+
+  const icon = kind === "like"
+    // Thumbs-up
+    ? `<path d="M${cx - 30} ${cy + 6} h22 v46 h-22 a6 6 0 0 1 -6 -6 v-34 a6 6 0 0 1 6 -6 z" fill="#ffffff"/>
+       <path d="M${cx - 2} ${cy + 52} v-46 l22 -40 a12 12 0 0 1 20 12 l-8 22 h30 a12 12 0 0 1 11 15 l-12 40 a14 14 0 0 1 -13 10 h-50 z" fill="#ffffff"/>`
+    // Bell
+    : `<path d="M${cx} ${cy - 52} a34 34 0 0 1 34 34 v22 l14 20 h-96 l14 -20 v-22 a34 34 0 0 1 34 -34 z" fill="#ffffff"/>
+       <circle cx="${cx}" cy="${cy - 56}" r="8" fill="#ffffff"/>
+       <path d="M${cx - 14} ${cy + 32} a14 14 0 0 0 28 0 z" fill="#ffffff"/>`;
+
+  return `<g opacity="${e.toFixed(3)}" transform="translate(0 ${((1 - e) * 40).toFixed(1)})">
+  <g filter="url(#cardShadow)">
+    <rect x="${factX}" y="${y}" width="${factW}" height="${h}" rx="30" fill="url(#pillGrad)" stroke="${COLOR.cyan}" stroke-width="5"/>
+  </g>
+  <circle cx="${cx}" cy="${cy}" r="76" fill="#ffffff" fill-opacity="0.18"/>
+  ${icon}
+  <text x="${factX + 250}" y="${y + 96}" font-family="Arial, Helvetica, sans-serif" font-size="42" font-weight="bold" fill="#ffffff" letter-spacing="1">${esc(heading)}</text>
+  <text x="${factX + 250}" y="${y + 166}" font-family="Arial, Helvetica, sans-serif" font-size="58" font-weight="bold" fill="#FFD84D" letter-spacing="2">${esc(sub)}</text>
+</g>`;
+}
+
+/** Closing card: score prompt, thanks, and the share line. */
 export function outroCard(enter: number): string {
   const e = easeOutCubic(enter);
-  const lines = ["How many did", "you get right?"];
-  const body = lines
-    .map((line, i) => `<text x="${CANVAS.width / 2}" y="${820 + i * 118}" font-family="Arial, Helvetica, sans-serif" font-size="96" font-weight="bold" fill="${COLOR.white}" text-anchor="middle">${esc(line)}</text>`)
-    .join("\n");
-
   return `<g opacity="${e.toFixed(3)}">
-  ${body}
+  <text x="${CANVAS.width / 2}" y="720" font-family="Arial, Helvetica, sans-serif" font-size="88" font-weight="bold" fill="${COLOR.white}" text-anchor="middle">How many did</text>
+  <text x="${CANVAS.width / 2}" y="826" font-family="Arial, Helvetica, sans-serif" font-size="88" font-weight="bold" fill="${COLOR.white}" text-anchor="middle">you get right?</text>
   <g filter="url(#cardShadow)">
-    <rect x="150" y="1080" width="780" height="120" rx="60" fill="url(#pillGrad)" stroke="${COLOR.optionStroke}" stroke-width="4"/>
+    <rect x="150" y="900" width="780" height="118" rx="59" fill="url(#pillGrad)" stroke="${COLOR.optionStroke}" stroke-width="4"/>
   </g>
-  <text x="${CANVAS.width / 2}" y="1157" font-family="Arial, Helvetica, sans-serif" font-size="46" font-weight="bold" fill="${COLOR.white}" text-anchor="middle">Comment your score!</text>
-  <text x="${CANVAS.width / 2}" y="1320" font-family="Arial, Helvetica, sans-serif" font-size="42" font-weight="bold" fill="${COLOR.panelStroke}" text-anchor="middle" letter-spacing="3">FOLLOW GK TIGER FOR MORE</text>
+  <text x="${CANVAS.width / 2}" y="976" font-family="Arial, Helvetica, sans-serif" font-size="44" font-weight="bold" fill="${COLOR.white}" text-anchor="middle">Comment your score below!</text>
+
+  <text x="${CANVAS.width / 2}" y="1150" font-family="Arial, Helvetica, sans-serif" font-size="72" font-weight="bold" fill="#FFD84D" text-anchor="middle">Thanks for watching!</text>
+
+  <g filter="url(#cardShadow)">
+    <rect x="90" y="1230" width="900" height="200" rx="34" fill="${COLOR.cardWhite}" stroke="${COLOR.panelStroke}" stroke-width="4"/>
+  </g>
+  <text x="${CANVAS.width / 2}" y="1310" font-family="Arial, Helvetica, sans-serif" font-size="44" font-weight="bold" fill="${COLOR.cardInk}" text-anchor="middle">Share this with your</text>
+  <text x="${CANVAS.width / 2}" y="1372" font-family="Arial, Helvetica, sans-serif" font-size="44" font-weight="bold" fill="${COLOR.cardInk}" text-anchor="middle">favourite person in the world</text>
+
+  <text x="${CANVAS.width / 2}" y="1530" font-family="Arial, Helvetica, sans-serif" font-size="38" font-weight="bold" fill="${COLOR.panelStroke}" text-anchor="middle" letter-spacing="3">FOLLOW GK TIGER FOR MORE</text>
 </g>`;
 }
