@@ -5,10 +5,11 @@ import { runFfmpeg } from "@/services/render/ffmpeg";
 import { probeAudioDuration } from "@/services/render/ffprobe";
 import { synthesizeAtRate } from "@/services/providers/edge-tts";
 import type { GkQuizQuestion } from "@/lib/database";
-import { CANVAS } from "./template/theme";
+import { CANVAS, LAYOUT } from "./template/theme";
 import { renderFrameSvg } from "./template/frame";
 import { buildTimeline, type CuePoint, type QuizSlideData, type SlideTiming, type Timeline } from "./template/timeline";
 import { getMascotDataUri } from "./assets";
+import { downloadSquareImages } from "@/services/providers/pollinations";
 
 /** Energetic quiz-show delivery. Lines are fitted into the template's fixed
  * animation slots, so this mainly controls how natural the reads sound. */
@@ -44,6 +45,53 @@ export function toSlideData(questions: GkQuizQuestion[], countdownSeconds: numbe
     explanation: q.explanation,
     countdownSeconds,
   }));
+}
+
+/** Illustration prompt for one answer choice. Deliberately literal and
+ * uncluttered — it has to read at 150px on a phone — and it must never hint
+ * at which option is correct. */
+function optionImagePrompt(choice: string, category: string): string {
+  return `A clear, simple, brightly lit photograph of ${choice}, single centered subject filling the frame, plain uncluttered background, vibrant colors, sharp focus. Educational quiz illustration about ${category}. No text, no words, no letters, no watermark.`;
+}
+
+/** Generates one illustration per answer option and returns them as small
+ * data: URIs, ready to embed in each frame's SVG. Downscaled hard on purpose:
+ * they render at 150px, and a big payload would be re-decoded on every one of
+ * the ~2500 frames. A failed image just leaves that option text-only. */
+async function buildOptionImages(
+  slides: QuizSlideData[],
+  category: string,
+  workDir: string,
+): Promise<void> {
+  const prompts: string[] = [];
+  const targets: string[] = [];
+  const index: { slide: number; option: number }[] = [];
+
+  slides.forEach((slide, si) => {
+    slide.answers.forEach((answer, oi) => {
+      prompts.push(optionImagePrompt(answer.text, category));
+      targets.push(path.join(workDir, `opt_${si}_${oi}`));
+      index.push({ slide: si, option: oi });
+    });
+  });
+
+  const files = await downloadSquareImages(prompts, 320, targets);
+
+  await Promise.all(
+    files.map(async (file, i) => {
+      if (!file) return;
+      const { slide, option } = index[i];
+      try {
+        const buf = await sharp(file)
+          .resize(LAYOUT.thumbSize * 2, LAYOUT.thumbSize * 2, { fit: "cover" })
+          .jpeg({ quality: 78 })
+          .toBuffer();
+        slides[slide].answers[option].image = `data:image/jpeg;base64,${buf.toString("base64")}`;
+      } catch {
+        // Leave this option text-only.
+      }
+    }),
+  );
 }
 
 type VoiceLine = { text: string; at: number; path: string };
@@ -177,7 +225,7 @@ async function renderFrames(timeline: Timeline, framesDir: string, mascot: strin
 export async function renderQuizVideo(
   questions: GkQuizQuestion[],
   mediaDir: string,
-  options: { countdownSeconds?: number; voice?: string } = {},
+  options: { countdownSeconds?: number; voice?: string; category?: string; onPhase?: (phase: "rendering") => void } = {},
 ): Promise<GkRenderResult> {
   const countdownSeconds = options.countdownSeconds ?? 10;
   const voice = options.voice ?? "Female — Energetic";
@@ -186,7 +234,12 @@ export async function renderQuizVideo(
   const framesDir = path.join(workDir, "frames");
   await fs.mkdir(workDir, { recursive: true });
 
-  const timeline = buildTimeline(toSlideData(questions, countdownSeconds));
+  const slides = toSlideData(questions, countdownSeconds);
+  if (options.category) {
+    await buildOptionImages(slides, options.category, workDir);
+  }
+  options.onPhase?.("rendering");
+  const timeline = buildTimeline(slides);
   const mascot = await getMascotDataUri();
 
   // Voice-over first: each line is measured so the SRT is accurate.

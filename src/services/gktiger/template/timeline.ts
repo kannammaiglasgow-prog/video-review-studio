@@ -10,7 +10,8 @@ export type QuizSlideData = {
   questionNumber: number;
   totalQuestions: number;
   question: string;
-  answers: { letter: string; text: string }[];
+  /** `image` is a data: URI when an option illustration is available. */
+  answers: { letter: string; text: string; image?: string | null }[];
   correctAnswer: string;
   explanation: string;
   countdownSeconds: number;

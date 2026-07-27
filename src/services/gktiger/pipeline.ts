@@ -107,10 +107,13 @@ export async function generateGkTigerVideo(options: GkGenerateOptions = {}): Pro
   await fs.mkdir(mediaDir, { recursive: true });
 
   try {
-    // 5-7. The approved template renders every frame itself (SVG -> PNG), so
-    // there is no per-scene media fetch — only the quiz data varies.
-    updateStoryProject(projectId, { status: "rendering" });
-    const rendered = await renderQuizVideo(questions, mediaDir, { countdownSeconds: COUNTDOWN_SECONDS });
+    // 5-7. Option illustrations, then the template renders every frame itself.
+    updateStoryProject(projectId, { status: "fetching_media" });
+    const rendered = await renderQuizVideo(questions, mediaDir, {
+      countdownSeconds: COUNTDOWN_SECONDS,
+      category,
+      onPhase: (phase) => updateStoryProject(projectId, { status: phase }),
+    });
 
     if (rendered.durationSeconds > MAX_DURATION_SECONDS) {
       warnings.push(`Video is ${rendered.durationSeconds.toFixed(1)}s — over the ${MAX_DURATION_SECONDS}s Shorts ceiling`);

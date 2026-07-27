@@ -70,18 +70,23 @@ export const LAYOUT = {
   questionW: 960,
   questionH: 340,
 
-  // Answer options
+  // Answer options — taller than the flat design so each can carry a
+  // thumbnail, using the empty space that sat below the options.
   optionX: 62,
   optionW: 956,
-  optionH: 150,
-  optionGap: 44,
-  optionsTop: 736,
+  optionH: 188,
+  optionGap: 38,
+  optionsTop: 730,
+
+  // Option thumbnail (sits between the letter badge and the answer text)
+  thumbSize: 150,
+  thumbInset: 19,
 
   // Quick fact card
   factX: 60,
   factW: 960,
   factH: 232,
-  factY: 1322,
+  factY: 1418,
 
   footerY: 1858,
 } as const;

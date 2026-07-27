@@ -27,7 +27,7 @@ ${outroCard(state.enter)}`;
         if (revealed) {
           optionState = answer.letter.toUpperCase() === data.correctAnswer.toUpperCase() ? "correct" : "dimmed";
         }
-        return answerOption(i, answer.letter, answer.text, optionState, state.optionEnter[i]);
+        return answerOption(i, answer.letter, answer.text, optionState, state.optionEnter[i], answer.image);
       })
       .join("\n");
 

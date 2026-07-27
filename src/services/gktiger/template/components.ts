@@ -164,6 +164,7 @@ export function answerOption(
   text: string,
   state: AnswerState,
   enter: number,
+  imageHref?: string | null,
 ): string {
   if (state === "hidden" || enter <= 0.01) return "";
 
@@ -182,10 +183,23 @@ export function answerOption(
   const notch = 34;
   const badgePath = `M${optionX + 8} ${y + 8} H${optionX + badgeW - notch} L${optionX + badgeW + 6} ${y + optionH / 2} L${optionX + badgeW - notch} ${y + optionH - 8} H${optionX + 8} Z`;
 
-  const { lines, fontSize } = fitText(text, optionW - badgeW - (isCorrect ? 260 : 90), 2, 52, 32);
+  const { thumbSize } = LAYOUT;
+  const hasThumb = Boolean(imageHref);
+  const thumbX = optionX + badgeW + 18;
+  const thumbY = y + (optionH - thumbSize) / 2;
+  const textX = hasThumb ? thumbX + thumbSize + 30 : optionX + badgeW + 40;
+  const textBudget = optionW - (textX - optionX) - (isCorrect ? 210 : 40);
+
+  const { lines, fontSize } = fitText(text, textBudget, 2, 52, 30);
   const lineHeight = fontSize * 1.16;
   const textStartY = y + optionH / 2 - ((lines.length - 1) * lineHeight) / 2 + fontSize * 0.34;
-  const textX = optionX + badgeW + 40;
+
+  const clipId = `thumbClip${index}`;
+  const thumb = hasThumb
+    ? `<clipPath id="${clipId}"><rect x="${thumbX}" y="${thumbY}" width="${thumbSize}" height="${thumbSize}" rx="20"/></clipPath>
+  <image href="${imageHref}" x="${thumbX}" y="${thumbY}" width="${thumbSize}" height="${thumbSize}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clipId})"/>
+  <rect x="${thumbX}" y="${thumbY}" width="${thumbSize}" height="${thumbSize}" rx="20" fill="none" stroke="${COLOR.white}" stroke-opacity="0.75" stroke-width="4"/>`
+    : "";
 
   const answerText = lines
     .map((line, i) => `<text x="${textX}" y="${(textStartY + i * lineHeight).toFixed(1)}" font-family="Arial, Helvetica, sans-serif" font-size="${fontSize}" font-weight="bold" fill="${COLOR.white}">${esc(line)}</text>`)
@@ -205,6 +219,7 @@ export function answerOption(
   </g>
   <path d="${badgePath}" fill="${isCorrect ? COLOR.correctBottom : "url(#badgeGrad)"}" stroke="${COLOR.white}" stroke-opacity="0.5" stroke-width="3"/>
   <text x="${optionX + (badgeW - notch) / 2 + 4}" y="${y + optionH / 2 + 22}" font-family="Arial, Helvetica, sans-serif" font-size="66" font-weight="bold" fill="${COLOR.white}" text-anchor="middle">${esc(letter)}</text>
+  ${thumb}
   ${answerText}
   ${correctMark}
 </g>`;
