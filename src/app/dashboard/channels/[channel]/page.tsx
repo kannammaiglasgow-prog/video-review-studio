@@ -123,11 +123,16 @@ https://en.wikipedia.org/wiki/Chandrayaan-3
 
 …or paste a story / article and the quiz will be built from it.`;
 
-/** GK Tiger quiz generator. Questions come from one of three sources —
- * auto-generated, hand-written, or drawn from a pasted link/story — and all
- * three go through fact-verification before anything renders. Uploading is
- * opt-in and Private by default. */
-function GkTigerPanel() {
+/** Quiz generator, one section per channel. Every channel wears the same
+ * approved template but in its own colours, language and subject matter — the
+ * server decides all of that from the channel key, so this panel only has to
+ * ask which channel it belongs to.
+ *
+ * Questions come from one of three sources — auto-generated, hand-written, or
+ * drawn from a pasted link/story — and all three go through fact-verification
+ * before anything renders. Uploading is opt-in and Private by default. */
+function QuizPanel({ channel }: { channel: string }) {
+  const [meta, setMeta] = useState<{ label: string; language: string; wordmark: [string, string] } | null>(null);
   const [categories, setCategories] = useState<string[]>([]);
   const [category, setCategory] = useState("");
   const [difficulty, setDifficulty] = useState("mixed");
@@ -139,18 +144,29 @@ function GkTigerPanel() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<string>("");
 
+  const endpoint = `/api/quiz/${channel}/generate`;
+
+  // Topics, language and wording are per-channel. The panel is mounted with
+  // key={channel} at the call site, so a channel switch remounts it fresh —
+  // this only has to load the new channel's metadata, never unpick the old.
   useEffect(() => {
-    fetch("/api/gktiger/generate")
+    let live = true;
+    fetch(endpoint)
       .then((r) => r.json())
-      .then((d) => setCategories(d.categories || []))
+      .then((d) => {
+        if (!live) return;
+        setCategories(d.categories || []);
+        if (d.label) setMeta({ label: d.label, language: d.language, wordmark: d.wordmark });
+      })
       .catch(() => {});
-  }, []);
+    return () => { live = false; };
+  }, [endpoint]);
 
   const generate = async () => {
     setBusy(true);
     setResult("⏳ Questions verify ஆகி, படங்கள் generate ஆகி, video render ஆகுது — சில நிமிடம் ஆகும்...");
     try {
-      const res = await fetch("/api/gktiger/generate", {
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -185,9 +201,13 @@ function GkTigerPanel() {
 
   return (
     <div style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(245,124,31,0.35)", borderRadius: 14, padding: 18, marginBottom: 20 }}>
-      <h2 style={{ fontSize: 15, fontWeight: 700, marginTop: 0, marginBottom: 4 }}>🐯 GK Tiger Quiz Generator</h2>
+      <h2 style={{ fontSize: 15, fontWeight: 700, marginTop: 0, marginBottom: 4 }}>
+        ❓ {meta?.label ?? "Quiz"} Quiz Generator
+      </h2>
       <div style={{ fontSize: 12, color: "#a0a0c0", marginBottom: 14 }}>
-        4 கேள்விகள் · A/B/C + படம் · 3-2-1 countdown · 1080×1920. ஒவ்வொரு பதிலும் தனி fact-check pass-ல் verify ஆகும் — உறுதியில்லாத கேள்வி நிராகரிக்கப்படும்.
+        4 கேள்விகள் · A/B/C + படம் · 3-2-1 countdown · 1080×1920
+        {meta && ` · ${meta.wordmark.join(" ")} branding · ${meta.language === "ta" ? "தமிழ்" : "English"}`}.
+        <br />ஒவ்வொரு பதிலும் தனி fact-check pass-ல் verify ஆகும் — உறுதியில்லாத கேள்வி நிராகரிக்கப்படும்.
       </div>
 
       <label style={{ display: "block", marginBottom: 6, color: "#a0a0c0", fontSize: 13 }}>Category</label>
@@ -260,7 +280,7 @@ function GkTigerPanel() {
           color: busy ? "#707090" : "#101014", fontSize: 14, fontWeight: 700,
         }}
       >
-        {busy ? "⏳ Generate ஆகுது..." : "🐯 Quiz Short உருவாக்கு"}
+        {busy ? "⏳ Generate ஆகுது..." : "❓ Quiz Short உருவாக்கு"}
       </button>
 
       {result && (
@@ -528,7 +548,10 @@ export default function ChannelDetailPage() {
 
         {(channel === "story" || channel === "english" || channel === "devotional" || channel === "news") && <IdeaEngineAutomation channel={channel} />}
 
-        {channel === "gktiger" && <GkTigerPanel />}
+        {/* Every channel gets its own quiz section, branded and languaged for
+            that channel by the server. */}
+        <QuizPanel key={channel} channel={channel} />
+
 
         {/* Currently in progress */}
         <div style={box}>

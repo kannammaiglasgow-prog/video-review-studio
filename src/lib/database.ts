@@ -444,6 +444,40 @@ function migrate(db: DatabaseSync) {
   `);
   db.exec("INSERT OR IGNORE INTO auto_story_settings (channel, enabled, times, shorts_times) VALUES ('gktiger', 0, '[\"10:00\"]', '[\"09:00\",\"15:00\",\"20:00\"]')");
   db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (33, 'gk_tiger_quiz')");
+
+  // Every channel now runs quizzes, so the bank is scoped per channel: the
+  // same question may legitimately appear on the Tamil and English channels,
+  // and one channel must never exhaust another's supply. SQLite can't alter a
+  // UNIQUE constraint in place, so the table is rebuilt once and the existing
+  // rows are adopted by GK Tiger, which is the only channel that wrote them.
+  const quizHasChannel =
+    (db.prepare("SELECT COUNT(*) AS count FROM pragma_table_info('gk_quiz_questions') WHERE name='channel'").get() as { count: number }).count > 0;
+  if (!quizHasChannel) {
+    db.exec(`
+      CREATE TABLE gk_quiz_questions_v2 (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        channel TEXT NOT NULL DEFAULT 'gktiger',
+        question TEXT NOT NULL,
+        choice_a TEXT NOT NULL,
+        choice_b TEXT NOT NULL,
+        choice_c TEXT NOT NULL,
+        correct TEXT NOT NULL,
+        explanation TEXT,
+        category TEXT NOT NULL,
+        difficulty TEXT NOT NULL DEFAULT 'mixed',
+        story_id INTEGER,
+        used_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (channel, question)
+      );
+      INSERT INTO gk_quiz_questions_v2
+        (id, channel, question, choice_a, choice_b, choice_c, correct, explanation, category, difficulty, story_id, used_at)
+        SELECT id, 'gktiger', question, choice_a, choice_b, choice_c, correct, explanation, category, difficulty, story_id, used_at
+        FROM gk_quiz_questions;
+      DROP TABLE gk_quiz_questions;
+      ALTER TABLE gk_quiz_questions_v2 RENAME TO gk_quiz_questions;
+    `);
+  }
+  db.exec("INSERT OR IGNORE INTO migrations (id, name) VALUES (34, 'quiz_bank_per_channel')");
 }
 
 export type GkQuizQuestion = {
@@ -457,32 +491,37 @@ export type GkQuizQuestion = {
   difficulty: string;
 };
 
-/** Lower-cased, punctuation-stripped question text of everything already used —
- * the generator is told to avoid these, and insertion is UNIQUE-guarded too. */
-export function getUsedQuizQuestions(limit = 400): string[] {
+/** Question text of everything this channel has already used — the generator is
+ * told to avoid these, and insertion is UNIQUE-guarded too. Scoped by channel
+ * so the Tamil and English channels keep independent banks. */
+export function getUsedQuizQuestions(channel: string, limit = 400): string[] {
   const db = database();
-  const rows = db.prepare("SELECT question FROM gk_quiz_questions ORDER BY id DESC LIMIT ?").all(limit) as { question: string }[];
+  const rows = db
+    .prepare("SELECT question FROM gk_quiz_questions WHERE channel = ? ORDER BY id DESC LIMIT ?")
+    .all(channel, limit) as { question: string }[];
   return rows.map((r) => r.question);
 }
 
-export function isQuizQuestionUsed(question: string): boolean {
+export function isQuizQuestionUsed(channel: string, question: string): boolean {
   const db = database();
-  const row = db.prepare("SELECT 1 AS x FROM gk_quiz_questions WHERE lower(trim(question)) = lower(trim(?))").get(question);
+  const row = db
+    .prepare("SELECT 1 AS x FROM gk_quiz_questions WHERE channel = ? AND lower(trim(question)) = lower(trim(?))")
+    .get(channel, question);
   return Boolean(row);
 }
 
-/** Records the three questions actually used in a rendered video. Returns how
- * many were newly stored — a caller seeing fewer than it passed knows a
- * duplicate slipped through generation and can fail the run. */
-export function recordQuizQuestions(questions: GkQuizQuestion[], storyId: number): number {
+/** Records the questions actually used in a rendered video. Returns how many
+ * were newly stored — a caller seeing fewer than it passed knows a duplicate
+ * slipped through generation and can flag the run. */
+export function recordQuizQuestions(channel: string, questions: GkQuizQuestion[], storyId: number): number {
   const db = database();
   const stmt = db.prepare(
-    `INSERT OR IGNORE INTO gk_quiz_questions (question, choice_a, choice_b, choice_c, correct, explanation, category, difficulty, story_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT OR IGNORE INTO gk_quiz_questions (channel, question, choice_a, choice_b, choice_c, correct, explanation, category, difficulty, story_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   let inserted = 0;
   for (const q of questions) {
-    const result = stmt.run(q.question, q.choiceA, q.choiceB, q.choiceC, q.correct, q.explanation, q.category, q.difficulty, storyId);
+    const result = stmt.run(channel, q.question, q.choiceA, q.choiceB, q.choiceC, q.correct, q.explanation, q.category, q.difficulty, storyId);
     if (result.changes > 0) inserted += 1;
   }
   return inserted;

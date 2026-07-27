@@ -1,50 +1,19 @@
-import { NextResponse } from "next/server";
-import { generateGkTigerVideo } from "@/services/gktiger/pipeline";
-import { GK_CATEGORIES, type GkCategory, type GkDifficulty } from "@/services/gktiger/questions";
+/** Legacy GK Tiger endpoint. Quizzes now run on every channel through
+ * /api/quiz/[channel]/generate; this stays so anything still pointing here
+ * keeps working, and simply forwards to the GK Tiger channel. */
+
+import { GET as quizGet, POST as quizPost } from "../../quiz/[channel]/generate/route";
 
 export const runtime = "nodejs";
 export const maxDuration = 900;
 export const dynamic = "force-dynamic";
 
-const DIFFICULTIES: GkDifficulty[] = ["easy", "medium", "hard", "mixed"];
+const gktiger = { params: Promise.resolve({ channel: "gktiger" }) };
 
-export async function GET() {
-  return NextResponse.json({ categories: GK_CATEGORIES, difficulties: DIFFICULTIES });
+export function GET(request: Request) {
+  return quizGet(request, gktiger);
 }
 
-export async function POST(request: Request) {
-  try {
-    const body = await request.json().catch(() => ({}));
-    const category = GK_CATEGORIES.includes(body.category) ? (body.category as GkCategory) : undefined;
-    const difficulty = DIFFICULTIES.includes(body.difficulty) ? (body.difficulty as GkDifficulty) : "mixed";
-
-    const manualQuestions = typeof body.manualQuestions === "string" ? body.manualQuestions : undefined;
-    const sourceMaterial = typeof body.sourceMaterial === "string" ? body.sourceMaterial : undefined;
-    const autoUpload = body.autoUpload === true;
-    // Private unless explicitly told otherwise — nothing unreviewed goes public.
-    const privacy = body.privacy === "public" ? "public" : body.privacy === "unlisted" ? "unlisted" : "private";
-
-    // Awaited rather than fire-and-forget: a run that fails fact-verification
-    // must surface that to the caller instead of silently producing nothing.
-    const result = await generateGkTigerVideo({ category, difficulty, manualQuestions, sourceMaterial, autoUpload, privacy });
-
-    return NextResponse.json({
-      success: true,
-      projectId: result.projectId,
-      category: result.category,
-      difficulty: result.difficulty,
-      durationSeconds: Number(result.durationSeconds.toFixed(2)),
-      questions: result.questions.map((q) => ({ question: q.question, correct: q.correct })),
-      warnings: result.warnings,
-      youtubeUrl: result.youtubeUrl,
-      message: result.youtubeUrl
-        ? `GK Tiger Short uploaded (Project #${result.projectId}): ${result.youtubeUrl}`
-        : `GK Tiger Short ready (Project #${result.projectId}) — review it, then upload.`,
-    });
-  } catch (error) {
-    return NextResponse.json(
-      { success: false, error: error instanceof Error ? error.message : "GK Tiger generation failed" },
-      { status: 500 },
-    );
-  }
+export function POST(request: Request) {
+  return quizPost(request, gktiger);
 }
