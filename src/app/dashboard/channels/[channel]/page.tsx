@@ -19,13 +19,23 @@ const statusLabels: Record<string, string> = {
   generating: "📝 Script எழுதப்படுகிறது...",
   writing_scenes: "🎬 Scenes உருவாக்கப்படுகிறது...",
   generating_audio: "🎙️ Audio உருவாக்கப்படுகிறது...",
-  fetching_media: "🎬 Stock media தேடுகிறது...",
+  fetching_media: "🖼️ Scene media தயாராகிறது...",
   script_ready: "✅ Render ஆக காத்திருக்கிறது",
   rendering: "🎞️ Video render ஆகிறது...",
   rendered: "✅ Video ரெடி!",
   uploaded: "🚀 YouTube-க்கு upload ஆயிற்று!",
   failed: "❌ தோல்வி",
 };
+
+/** The media step means different things per channel — GK Tiger generates one
+ * AI picture per answer option, everything else pulls stock footage or scene
+ * images — so the generic label would be actively misleading there. */
+function statusLabelFor(status: string, channel: string): string {
+  if (status === "fetching_media" && channel === "gktiger") {
+    return "🖼️ Quiz option படங்கள் generate ஆகிறது...";
+  }
+  return statusLabels[status] || status;
+}
 
 function relativeTime(iso: string): string {
   const diffMs = Date.now() - new Date(iso.replace(" ", "T") + "Z").getTime();
@@ -450,7 +460,7 @@ export default function ChannelDetailPage() {
                 <Link key={p.id} href={`/sivan-arul/story-to-video?project=${p.id}`} style={{ textDecoration: "none", color: "#fff" }}>
                   <div style={{ padding: "10px 12px", background: "rgba(167,139,250,0.08)", borderRadius: 8, border: "1px solid rgba(167,139,250,0.2)" }}>
                     <div style={{ fontSize: 13, marginBottom: 4 }}>{p.title}</div>
-                    <div style={{ fontSize: 12, color: "#a78bfa" }}>{statusLabels[p.status] || p.status}</div>
+                    <div style={{ fontSize: 12, color: "#a78bfa" }}>{statusLabelFor(p.status, channel)}</div>
                   </div>
                 </Link>
               ))}
@@ -472,7 +482,7 @@ export default function ChannelDetailPage() {
                       #{p.id} · {p.title}
                     </Link>
                     <div style={{ fontSize: 11, color: "#707090", marginTop: 2 }}>
-                      {statusLabels[p.status] || p.status} · {relativeTime(p.createdAt)}
+                      {statusLabelFor(p.status, channel)} · {relativeTime(p.createdAt)}
                     </div>
                   </div>
                   {p.youtubeUrl && (
