@@ -7,23 +7,17 @@ import {
   recordQuizQuestions,
   type GkQuizQuestion,
 } from "@/lib/database";
-import { downloadSquareImages } from "@/services/providers/pollinations";
-import { BRAND } from "./brand";
 import { generateVerifiedQuestions, pickCategory, type GkCategory, type GkDifficulty } from "./questions";
 import { renderQuizVideo } from "./render";
 
 const QUESTIONS_PER_VIDEO = 4;
-/** Shorts hard limit is 60s; the brief targets 20-35s but four questions with
- * a real 3s countdown each cannot fit that, so this is the practical ceiling. */
-const MAX_DURATION_SECONDS = 59;
+/** Time the viewer gets to choose, per the approved design's timer. */
+const COUNTDOWN_SECONDS = 10;
+/** Four questions each holding a full 10s countdown cannot fit the original
+ * 20-35s brief; YouTube Shorts accepts up to 3 minutes, so this is the
+ * practical ceiling for the approved template. */
+const MAX_DURATION_SECONDS = 75;
 const MIN_DURATION_SECONDS = 18;
-
-/** Illustration prompt for one answer choice. Deliberately plain and literal —
- * the picture has to read instantly at thumbnail size on a phone, and must not
- * hint at which option is correct. */
-function optionImagePrompt(choice: string, category: string): string {
-  return `A clear, simple, brightly lit photograph of ${choice}, centered subject, plain uncluttered background, vibrant colors, high detail, subject fills the frame. Educational quiz illustration for the topic ${category}. No text, no words, no letters, no watermarks.`;
-}
 
 export type GkGenerateOptions = {
   category?: GkCategory;
@@ -64,7 +58,8 @@ function qualityCheck(questions: GkQuizQuestion[]): { failures: string[]; warnin
     if (seen.has(norm)) failures.push(`${label}: duplicate question within this video`);
     seen.add(norm);
 
-    // Mobile-safe text budgets (see BRAND wrap limits).
+    // Mobile-safe text budgets — the template auto-shrinks beyond these, but
+    // flag them so the reviewer knows a card is running tight.
     if (q.question.length > 95) warnings.push(`${label}: question is long (${q.question.length} chars), may wrap tightly`);
     choices.forEach((c, ci) => {
       if (c.length > 30) warnings.push(`${label}: option ${"ABC"[ci]} is long (${c.length} chars)`);
@@ -112,25 +107,10 @@ export async function generateGkTigerVideo(options: GkGenerateOptions = {}): Pro
   await fs.mkdir(mediaDir, { recursive: true });
 
   try {
-    // 5. Copyright-safe option photos (AI-generated, one per choice).
-    updateStoryProject(projectId, { status: "fetching_media" });
-    const prompts: string[] = [];
-    const targets: string[] = [];
-    questions.forEach((q, qi) => {
-      [q.choiceA, q.choiceB, q.choiceC].forEach((choice, oi) => {
-        prompts.push(optionImagePrompt(choice, category));
-        targets.push(path.join(mediaDir, `opt_${qi}_${oi}`));
-      });
-    });
-    const flat = await downloadSquareImages(prompts, BRAND.photoSize, targets);
-
-    const optionImages: (string | null)[][] = questions.map((_, qi) => [0, 1, 2].map((oi) => flat[qi * 3 + oi]));
-    const missing = flat.filter((f) => f === null).length;
-    if (missing > 0) warnings.push(`${missing}/${flat.length} option images could not be generated — those cards show text only`);
-
-    // 6-7. Voice-over, subtitles, countdown and the branded 1080x1920 render.
+    // 5-7. The approved template renders every frame itself (SVG -> PNG), so
+    // there is no per-scene media fetch — only the quiz data varies.
     updateStoryProject(projectId, { status: "rendering" });
-    const rendered = await renderQuizVideo(questions, optionImages, mediaDir);
+    const rendered = await renderQuizVideo(questions, mediaDir, { countdownSeconds: COUNTDOWN_SECONDS });
 
     if (rendered.durationSeconds > MAX_DURATION_SECONDS) {
       warnings.push(`Video is ${rendered.durationSeconds.toFixed(1)}s — over the ${MAX_DURATION_SECONDS}s Shorts ceiling`);
