@@ -17,10 +17,13 @@ import { searchStockImages } from "@/services/providers/stock-media";
 const SPEECH_RATE = "+18%";
 
 /** Sound effects, reusing the repo's existing synthesized (copyright-safe)
- * cues in public/audio. Volume is per-cue so nothing buries the voice-over. */
-const SFX: Record<CuePoint["sound"], { file: string; volume: number }> = {
-  question: { file: "whoosh.wav", volume: 0.5 },
-  option: { file: "swipe.wav", volume: 0.32 },
+ * cues in public/audio. Volume is per-cue so nothing buries the voice-over.
+ *
+ * The question-entrance and per-option cues are deliberately unmapped: they
+ * fired under the narration every time a question or an answer was read,
+ * which just added noise. A cue with no entry here is silently skipped, so
+ * re-enabling one is a one-line change. */
+const SFX: Partial<Record<CuePoint["sound"], { file: string; volume: number }>> = {
   tick: { file: "page-flip.wav", volume: 0.45 },
   correct: { file: "sparkle.wav", volume: 0.75 },
 };
@@ -192,6 +195,7 @@ async function buildAudio(
 
   for (const cue of cues) {
     const spec = SFX[cue.sound];
+    if (!spec) continue;
     const file = path.join(audioDir, spec.file);
     try {
       await fs.access(file);
