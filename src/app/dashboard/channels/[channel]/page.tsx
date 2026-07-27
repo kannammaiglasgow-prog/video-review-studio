@@ -202,7 +202,7 @@ function QuizPanel({ channel }: { channel: string }) {
   return (
     <div style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(245,124,31,0.35)", borderRadius: 14, padding: 18, marginBottom: 20 }}>
       <h2 style={{ fontSize: 15, fontWeight: 700, marginTop: 0, marginBottom: 4 }}>
-        ❓ {meta?.label ?? "Quiz"} Quiz Generator
+        ❓ {meta?.label ? `${meta.label} ` : ""}Quiz Generator
       </h2>
       <div style={{ fontSize: 12, color: "#a0a0c0", marginBottom: 14 }}>
         4 கேள்விகள் · A/B/C + படம் · 3-2-1 countdown · 1080×1920
