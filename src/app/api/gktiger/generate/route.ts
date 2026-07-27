@@ -19,13 +19,14 @@ export async function POST(request: Request) {
     const difficulty = DIFFICULTIES.includes(body.difficulty) ? (body.difficulty as GkDifficulty) : "mixed";
 
     const manualQuestions = typeof body.manualQuestions === "string" ? body.manualQuestions : undefined;
+    const sourceMaterial = typeof body.sourceMaterial === "string" ? body.sourceMaterial : undefined;
     const autoUpload = body.autoUpload === true;
     // Private unless explicitly told otherwise — nothing unreviewed goes public.
     const privacy = body.privacy === "public" ? "public" : body.privacy === "unlisted" ? "unlisted" : "private";
 
     // Awaited rather than fire-and-forget: a run that fails fact-verification
     // must surface that to the caller instead of silently producing nothing.
-    const result = await generateGkTigerVideo({ category, difficulty, manualQuestions, autoUpload, privacy });
+    const result = await generateGkTigerVideo({ category, difficulty, manualQuestions, sourceMaterial, autoUpload, privacy });
 
     return NextResponse.json({
       success: true,

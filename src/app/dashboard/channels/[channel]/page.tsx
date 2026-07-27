@@ -104,9 +104,6 @@ function ToggleSwitch({ on, onClick }: { on: boolean; onClick: () => void }) {
   );
 }
 
-/** GK Tiger quiz generator — picks a category/difficulty, then runs the whole
- * verified-questions → option photos → branded render pipeline. Renders only;
- * uploading stays a deliberate, Private-by-default step below. */
 const MANUAL_PLACEHOLDER = `Write your questions in any reasonable format, e.g.
 
 1. Which planet is the Red Planet?
@@ -121,12 +118,22 @@ B) Pacific
 C) Indian
 Answer: B`;
 
+const SOURCE_PLACEHOLDER = `Paste a link, e.g.
+https://en.wikipedia.org/wiki/Chandrayaan-3
+
+…or paste a story / article and the quiz will be built from it.`;
+
+/** GK Tiger quiz generator. Questions come from one of three sources —
+ * auto-generated, hand-written, or drawn from a pasted link/story — and all
+ * three go through fact-verification before anything renders. Uploading is
+ * opt-in and Private by default. */
 function GkTigerPanel() {
   const [categories, setCategories] = useState<string[]>([]);
   const [category, setCategory] = useState("");
   const [difficulty, setDifficulty] = useState("mixed");
   const [manualQuestions, setManualQuestions] = useState("");
-  const [useManual, setUseManual] = useState(false);
+  const [mode, setMode] = useState<"auto" | "manual" | "source">("auto");
+  const [sourceMaterial, setSourceMaterial] = useState("");
   const [autoUpload, setAutoUpload] = useState(false);
   const [privacy, setPrivacy] = useState("private");
   const [busy, setBusy] = useState(false);
@@ -149,7 +156,8 @@ function GkTigerPanel() {
         body: JSON.stringify({
           category: category || undefined,
           difficulty,
-          manualQuestions: useManual && manualQuestions.trim() ? manualQuestions : undefined,
+          manualQuestions: mode === "manual" && manualQuestions.trim() ? manualQuestions : undefined,
+          sourceMaterial: mode === "source" && sourceMaterial.trim() ? sourceMaterial : undefined,
           autoUpload,
           privacy,
         }),
@@ -157,7 +165,9 @@ function GkTigerPanel() {
       const data = await res.json();
       if (data.success) {
         const warn = data.warnings?.length ? `\n⚠️ ${data.warnings.join(" | ")}` : "";
-        setResult(`✅ Project #${data.projectId} — ${data.durationSeconds}s, ${data.category}${warn}`);
+        const up = data.youtubeUrl ? `
+🚀 Uploaded (${privacy}): ${data.youtubeUrl}` : "";
+        setResult(`✅ Project #${data.projectId} — ${data.durationSeconds}s, ${data.category}${up}${warn}`);
       } else {
         setResult(`❌ ${data.error}`);
       }
@@ -194,11 +204,14 @@ function GkTigerPanel() {
         <option value="hard">Hard</option>
       </select>
 
-      <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 10, fontSize: 13, color: "#c0c0d8" }}>
-        <input type="checkbox" checked={useManual} onChange={(e) => setUseManual(e.target.checked)} />
-        ✍️ நானே கேள்விகளை எழுதுகிறேன் (Write my own questions)
-      </label>
-      {useManual && (
+      <label style={{ display: "block", marginBottom: 6, color: "#a0a0c0", fontSize: 13 }}>கேள்விகள் எங்கிருந்து?</label>
+      <select value={mode} onChange={(e) => setMode(e.target.value as "auto" | "manual" | "source")} style={selectStyle}>
+        <option value="auto">🎲 தானாக உருவாக்கு (Auto-generate)</option>
+        <option value="manual">✍️ நானே கேள்விகளை எழுதுகிறேன்</option>
+        <option value="source">🔗 Link / கதையிலிருந்து உருவாக்கு</option>
+      </select>
+
+      {mode === "manual" && (
         <textarea
           value={manualQuestions}
           onChange={(e) => setManualQuestions(e.target.value)}
@@ -206,6 +219,21 @@ function GkTigerPanel() {
           placeholder={MANUAL_PLACEHOLDER}
           style={{ ...selectStyle, resize: "vertical", fontFamily: "inherit" }}
         />
+      )}
+
+      {mode === "source" && (
+        <>
+          <textarea
+            value={sourceMaterial}
+            onChange={(e) => setSourceMaterial(e.target.value)}
+            rows={7}
+            placeholder={SOURCE_PLACEHOLDER}
+            style={{ ...selectStyle, resize: "vertical", fontFamily: "inherit" }}
+          />
+          <div style={{ fontSize: 11.5, color: "#707090", marginTop: -8, marginBottom: 14 }}>
+            ஒரு link கொடுத்தால் அந்த page-ன் article எடுக்கப்படும். கேள்விகள் அந்த உரையிலிருந்தே உருவாகி, அதே உரையை வைத்தே verify செய்யப்படும்.
+          </div>
+        </>
       )}
 
       <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", marginBottom: 10, fontSize: 13, color: "#c0c0d8" }}>

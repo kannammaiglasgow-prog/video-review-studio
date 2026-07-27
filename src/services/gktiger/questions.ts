@@ -230,3 +230,113 @@ Return ONLY JSON: {"questions":[{"question":"...","choiceA":"...","choiceB":"...
 
   return { questions: verified, rejected };
 }
+
+/** Verification for questions derived from a supplied source. The generic
+ * checker can't be used here: it only knows world facts, so it would reject a
+ * perfectly good question about the pasted article. This one is shown the
+ * source and must confirm the answer is BOTH supported by that text AND not
+ * contradicted by well-known fact. */
+async function verifyAgainstSource(questions: GkQuizQuestion[], source: string): Promise<GkQuizQuestion[]> {
+  if (questions.length === 0) return [];
+
+  const prompt = `You are a strict fact-checker. Below is a SOURCE TEXT, then quiz questions written from it.
+
+For each question decide, independently:
+- "correct": which letter (A, B or C) is actually correct.
+- "verified": true ONLY if ALL of these hold:
+  * The source text clearly supports that answer (not implied, not guessed).
+  * Exactly one option is defensible.
+  * The answer is not contradicted by well-established general knowledge.
+  Otherwise false.
+- "reason": under 80 characters; if false, say why.
+
+Be conservative — if the source is vague or the question is ambiguous, return false.
+
+SOURCE TEXT:
+${source.slice(0, 8000)}
+
+QUESTIONS:
+${questions.map((q, i) => `${i + 1}. ${q.question}\n   A: ${q.choiceA}\n   B: ${q.choiceB}\n   C: ${q.choiceC}`).join("\n\n")}
+
+Return ONLY JSON: {"verdicts":[{"index":1,"correct":"A","verified":true,"reason":"..."}]}`;
+
+  const raw = await geminiText(prompt, 0.1);
+  const data = parseJson<{ verdicts?: VerdictRow[] }>(raw);
+  const verdicts = Array.isArray(data.verdicts) ? data.verdicts : [];
+
+  const kept: GkQuizQuestion[] = [];
+  questions.forEach((q, i) => {
+    const verdict = verdicts.find((v) => Number(v.index) === i + 1);
+    if (!verdict?.verified) {
+      console.log(`[GKTiger] source question rejected "${q.question}" — ${verdict?.reason || "no verdict"}`);
+      return;
+    }
+    if (String(verdict.correct || "").toUpperCase() !== q.correct) {
+      console.log(`[GKTiger] source question rejected "${q.question}" — checker said ${verdict.correct}, writer said ${q.correct}`);
+      return;
+    }
+    kept.push(q);
+  });
+  return kept;
+}
+
+/** Builds quiz questions FROM supplied material — a pasted article, story or
+ * any block of text. Questions must be answerable from the material itself,
+ * so a viewer who read it could get them right, and each is then checked
+ * back against that same source. */
+export async function generateQuestionsFromSource(
+  source: string,
+  count: number,
+  category: GkCategory,
+  difficulty: GkDifficulty,
+): Promise<{ questions: GkQuizQuestion[]; rejected: string[] }> {
+  const prompt = `You are a quiz writer. Read the source text below and write ${count} multiple-choice questions drawn from it, for a fast-paced English general-knowledge Shorts channel.
+
+Rules:
+- Every answer must be clearly stated in or directly evidenced by the source text.
+- Ask about the most interesting, memorable or surprising facts in it — not trivia about wording or structure ("what does paragraph two say" is bad).
+- Do NOT reference the text itself. Write self-contained questions: "Which country invented paper?" not "According to the article, which country...".
+- Exactly 3 options labelled A, B and C, exactly one correct. Wrong options must be plausible but clearly wrong.
+- Question under 90 characters; each option under 28 characters.
+- Simple international English.
+- "explanation": one interesting sentence (under 100 characters) about the answer.
+- Difficulty: ${difficultyGuidance[difficulty]}
+
+SOURCE TEXT:
+${source.slice(0, 12000)}
+
+Return ONLY JSON: {"questions":[{"question":"...","choiceA":"...","choiceB":"...","choiceC":"...","correct":"A|B|C","explanation":"..."}]} — up to ${count} entries. Return fewer if the source doesn't support that many good questions.`;
+
+  const raw = await geminiText(prompt, 0.7);
+  const data = parseJson<{ questions?: Partial<GkQuizQuestion>[] }>(raw);
+  const list = Array.isArray(data.questions) ? data.questions : [];
+
+  const structured: GkQuizQuestion[] = list
+    .filter((q): q is GkQuizQuestion => {
+      const correct = String(q.correct || "").toUpperCase();
+      return Boolean(
+        q.question?.trim() && q.choiceA?.trim() && q.choiceB?.trim() && q.choiceC?.trim() &&
+        (correct === "A" || correct === "B" || correct === "C")
+      );
+    })
+    .map((q) => ({
+      question: q.question.trim(),
+      choiceA: q.choiceA.trim(),
+      choiceB: q.choiceB.trim(),
+      choiceC: q.choiceC.trim(),
+      correct: String(q.correct).toUpperCase() as "A" | "B" | "C",
+      explanation: (q.explanation || "").trim(),
+      category,
+      difficulty,
+    }));
+
+  if (structured.length === 0) {
+    throw new Error("No usable quiz questions could be drawn from that source.");
+  }
+
+  const verified = await verifyAgainstSource(structured, source);
+  const keptText = new Set(verified.map((q) => q.question));
+  const rejected = structured.filter((q) => !keptText.has(q.question)).map((q) => q.question);
+
+  return { questions: verified, rejected };
+}

@@ -8,7 +8,8 @@ import {
   type GkQuizQuestion,
 } from "@/lib/database";
 import { isYoutubeConnected, uploadToYoutube } from "@/services/providers/youtube";
-import { generateVerifiedQuestions, parseManualQuestions, pickCategory, type GkCategory, type GkDifficulty } from "./questions";
+import { extractArticleFromUrl } from "@/services/story/link-import";
+import { generateQuestionsFromSource, generateVerifiedQuestions, parseManualQuestions, pickCategory, type GkCategory, type GkDifficulty } from "./questions";
 import { renderQuizVideo } from "./render";
 
 const QUESTIONS_PER_VIDEO = 4;
@@ -31,6 +32,10 @@ export type GkGenerateOptions = {
   /** Hand-written questions. When supplied, nothing is auto-generated — the
    * text is structured and fact-checked, but the questions stay the user's. */
   manualQuestions?: string;
+  /** A URL or a block of text to build the quiz from. A URL is fetched and
+   * reduced to its article body first; questions are then drawn from that
+   * material and checked back against it. */
+  sourceMaterial?: string;
 };
 
 export type GkGenerateResult = {
@@ -94,7 +99,26 @@ export async function generateGkTigerVideo(options: GkGenerateOptions = {}): Pro
   const questions: GkQuizQuestion[] = [];
   const manualWarnings: string[] = [];
 
-  if (options.manualQuestions?.trim()) {
+  const source = options.sourceMaterial?.trim();
+  if (source) {
+    // A bare URL is fetched and reduced to its article text; anything else is
+    // treated as the material itself.
+    let material = source;
+    if (/^https?:\/\/\S+$/i.test(source)) {
+      const article = await extractArticleFromUrl(source);
+      material = article.title ? `${article.title}\n\n${article.article}` : article.article;
+    }
+    const { questions: fromSource, rejected } = await generateQuestionsFromSource(
+      material, QUESTIONS_PER_VIDEO, category, difficulty,
+    );
+    questions.push(...fromSource.slice(0, QUESTIONS_PER_VIDEO));
+    if (rejected.length > 0) {
+      manualWarnings.push(`${rejected.length} question(s) drawn from your source failed verification and were dropped`);
+    }
+    if (questions.length === 0) {
+      throw new Error("No questions from that source passed verification — nothing was rendered.");
+    }
+  } else if (options.manualQuestions?.trim()) {
     const { questions: parsed, rejected } = await parseManualQuestions(options.manualQuestions, category, difficulty);
     questions.push(...parsed);
     if (rejected.length > 0) {
