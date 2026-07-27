@@ -40,6 +40,19 @@ export type QuizGenerateOptions = {
    * reduced to its article body first; questions are then drawn from that
    * material and checked back against it. */
   sourceMaterial?: string;
+  /** Questions the user already previewed and approved. When supplied, nothing
+   * is generated — these exact questions are rendered, so "regenerate until
+   * happy, then render" produces the video the user actually saw. */
+  approvedQuestions?: GkQuizQuestion[];
+};
+
+export type QuizPreview = {
+  channel: ChannelType;
+  channelLabel: string;
+  category: string;
+  difficulty: string;
+  questions: GkQuizQuestion[];
+  warnings: string[];
 };
 
 export type QuizGenerateResult = {
@@ -95,6 +108,13 @@ function qualityCheck(brand: QuizBrand, questions: GkQuizQuestion[]): { failures
   return { failures, warnings };
 }
 
+const DIFFICULTIES: GkDifficulty[] = ["easy", "medium", "hard", "mixed"];
+/** A stored question's difficulty is a plain string; narrow it back, defaulting
+ * to "mixed" for anything unrecognised. */
+function asDifficulty(value: string | undefined): GkDifficulty {
+  return DIFFICULTIES.includes(value as GkDifficulty) ? (value as GkDifficulty) : "mixed";
+}
+
 /** Resolves the three question sources into one verified set. */
 async function collectQuestions(
   brand: QuizBrand,
@@ -146,6 +166,29 @@ async function collectQuestions(
   return { questions: generated, warnings };
 }
 
+/** Questions only — the preview step. Runs the same generation + fact-check +
+ * quality gate the render uses, but stops before anything is drawn, so the
+ * user can read the questions, regenerate if unhappy, and only then commit to
+ * a render. Nothing is recorded to the question bank here; that happens when a
+ * video actually ships, so regenerating doesn't burn questions. */
+export async function prepareQuizQuestions(
+  channel: ChannelType,
+  options: QuizGenerateOptions = {},
+): Promise<QuizPreview> {
+  const brand = brandFor(channel);
+  const category = options.category?.trim() || pickCategoryFor(brand);
+  const difficulty = options.difficulty || "mixed";
+
+  const { questions, warnings } = await collectQuestions(brand, category, difficulty, options);
+  const { failures, warnings: qualityWarnings } = qualityCheck(brand, questions);
+  warnings.push(...qualityWarnings);
+  if (failures.length > 0) {
+    throw new Error(`${brand.label} quiz quality check failed:\n- ${failures.join("\n- ")}`);
+  }
+
+  return { channel, channelLabel: brand.label, category, difficulty, questions, warnings };
+}
+
 /** End-to-end quiz Short for one channel: verified questions → option photos →
  * that channel's branded render. Creates an ordinary story_projects row
  * (intended_channel = the channel key) so the existing dashboard, upload and
@@ -156,14 +199,26 @@ export async function generateQuizVideo(
   options: QuizGenerateOptions = {},
 ): Promise<QuizGenerateResult> {
   const brand = brandFor(channel);
-  const category = options.category?.trim() || pickCategoryFor(brand);
-  const difficulty = options.difficulty || "mixed";
+  const approved = options.approvedQuestions?.filter((q) => q?.question?.trim()) ?? [];
+  const hasApproved = approved.length > 0;
+  // Approved questions carry their own category/difficulty; fall back to the
+  // request (or a random topic) only when generating fresh.
+  const category = options.category?.trim() || approved[0]?.category || pickCategoryFor(brand);
+  const difficulty: GkDifficulty = options.difficulty || asDifficulty(approved[0]?.difficulty);
   const maxDuration = BASE_MAX_DURATION_SECONDS * brand.paceScale;
 
-  // 1-3. Questions, each independently fact-checked (uncertain ones are
-  // dropped; generated sets are redrafted until full, hand-written ones are
-  // used exactly as given minus anything that failed verification).
-  const { questions, warnings } = await collectQuestions(brand, category, difficulty, options);
+  // 1-3. Either render the exact set the user approved, or generate + fact-check
+  // a fresh one (uncertain questions dropped; generated sets redrafted until
+  // full, hand-written ones used as given minus anything that failed).
+  const warnings: string[] = [];
+  let questions;
+  if (hasApproved) {
+    questions = approved;
+  } else {
+    const collected = await collectQuestions(brand, category, difficulty, options);
+    questions = collected.questions;
+    warnings.push(...collected.warnings);
+  }
 
   const { failures, warnings: qualityWarnings } = qualityCheck(brand, questions);
   warnings.push(...qualityWarnings);

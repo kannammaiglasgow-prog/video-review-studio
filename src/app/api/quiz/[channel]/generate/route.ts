@@ -2,6 +2,28 @@ import { NextResponse } from "next/server";
 import { generateQuizVideo, type QuizGenerateOptions } from "@/services/quiz/pipeline";
 import { brandFor, isQuizChannel } from "@/services/quiz/brand";
 import type { GkDifficulty } from "@/services/quiz/questions";
+import type { GkQuizQuestion } from "@/lib/database";
+
+/** Validates one client-supplied approved question into the DB shape, or null
+ * if it's malformed. The preview endpoint produced these, but they round-trip
+ * through the browser, so the render must not trust them blindly. */
+function toQuestion(raw: unknown, category: string, difficulty: string): GkQuizQuestion | null {
+  if (!raw || typeof raw !== "object") return null;
+  const q = raw as Record<string, unknown>;
+  const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+  const correct = str(q.correct).toUpperCase();
+  const question = str(q.question);
+  const choiceA = str(q.choiceA), choiceB = str(q.choiceB), choiceC = str(q.choiceC);
+  if (!question || !choiceA || !choiceB || !choiceC) return null;
+  if (correct !== "A" && correct !== "B" && correct !== "C") return null;
+  return {
+    question, choiceA, choiceB, choiceC,
+    correct: correct as "A" | "B" | "C",
+    explanation: str(q.explanation),
+    category: str(q.category) || category,
+    difficulty: str(q.difficulty) || difficulty,
+  };
+}
 
 export const runtime = "nodejs";
 export const maxDuration = 900;
@@ -42,11 +64,20 @@ export async function POST(request: Request, context: { params: Promise<{ channe
     const category = brand.categories.includes(body.category) ? String(body.category) : undefined;
     const difficulty: GkDifficulty = DIFFICULTIES.includes(body.difficulty) ? body.difficulty : "mixed";
 
+    // When the client sends back a previewed-and-approved set, render exactly
+    // those; a malformed entry is dropped, and an empty result falls through to
+    // fresh generation rather than rendering nothing.
+    const rawQuestions: unknown[] = Array.isArray(body.questions) ? body.questions : [];
+    const approvedQuestions = rawQuestions
+      .map((q) => toQuestion(q, category ?? "", difficulty))
+      .filter((q): q is GkQuizQuestion => q !== null);
+
     const options: QuizGenerateOptions = {
       category,
       difficulty,
       manualQuestions: typeof body.manualQuestions === "string" ? body.manualQuestions : undefined,
       sourceMaterial: typeof body.sourceMaterial === "string" ? body.sourceMaterial : undefined,
+      approvedQuestions: approvedQuestions.length > 0 ? approvedQuestions : undefined,
       autoUpload: body.autoUpload === true,
       // Private unless explicitly told otherwise — nothing unreviewed goes public.
       privacy: body.privacy === "public" ? "public" : body.privacy === "unlisted" ? "unlisted" : "private",

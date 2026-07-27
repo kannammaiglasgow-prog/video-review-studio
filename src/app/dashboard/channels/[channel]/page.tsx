@@ -129,8 +129,15 @@ https://en.wikipedia.org/wiki/Chandrayaan-3
  * ask which channel it belongs to.
  *
  * Questions come from one of three sources — auto-generated, hand-written, or
- * drawn from a pasted link/story — and all three go through fact-verification
- * before anything renders. Uploading is opt-in and Private by default. */
+ * drawn from a pasted link/story — and all three go through fact-verification.
+ * The user previews the verified questions first and can regenerate until
+ * happy; only then is the video rendered from that exact set. Uploading is
+ * opt-in and Private by default. */
+type PreviewQuestion = {
+  question: string; choiceA: string; choiceB: string; choiceC: string;
+  correct: "A" | "B" | "C"; explanation: string; category?: string; difficulty?: string;
+};
+
 function QuizPanel({ channel }: { channel: string }) {
   const [meta, setMeta] = useState<{ label: string; language: string; wordmark: [string, string] } | null>(null);
   const [categories, setCategories] = useState<string[]>([]);
@@ -141,17 +148,20 @@ function QuizPanel({ channel }: { channel: string }) {
   const [sourceMaterial, setSourceMaterial] = useState("");
   const [autoUpload, setAutoUpload] = useState(false);
   const [privacy, setPrivacy] = useState("private");
-  const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<PreviewQuestion[] | null>(null);
+  const [previewWarnings, setPreviewWarnings] = useState<string[]>([]);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [rendering, setRendering] = useState(false);
   const [result, setResult] = useState<string>("");
 
-  const endpoint = `/api/quiz/${channel}/generate`;
+  const base = `/api/quiz/${channel}`;
 
   // Topics, language and wording are per-channel. The panel is mounted with
   // key={channel} at the call site, so a channel switch remounts it fresh —
   // this only has to load the new channel's metadata, never unpick the old.
   useEffect(() => {
     let live = true;
-    fetch(endpoint)
+    fetch(`${base}/generate`)
       .then((r) => r.json())
       .then((d) => {
         if (!live) return;
@@ -160,37 +170,71 @@ function QuizPanel({ channel }: { channel: string }) {
       })
       .catch(() => {});
     return () => { live = false; };
-  }, [endpoint]);
+  }, [base]);
 
-  const generate = async () => {
-    setBusy(true);
-    setResult("⏳ Questions verify ஆகி, படங்கள் generate ஆகி, video render ஆகுது — சில நிமிடம் ஆகும்...");
+  // Any change to what the questions would be drawn from makes an existing
+  // preview stale, so drop it — the user must preview again before rendering.
+  useEffect(() => {
+    setPreview(null);
+  }, [category, difficulty, mode, sourceMaterial, manualQuestions]);
+
+  const requestBody = () => ({
+    category: category || undefined,
+    difficulty,
+    manualQuestions: mode === "manual" && manualQuestions.trim() ? manualQuestions : undefined,
+    sourceMaterial: mode === "source" && sourceMaterial.trim() ? sourceMaterial : undefined,
+  });
+
+  // Preview: generate + fact-check the questions only, so they can be read and
+  // regenerated before committing to a render.
+  const loadPreview = async () => {
+    setPreviewBusy(true);
+    setResult("");
+    setPreview(null);
     try {
-      const res = await fetch(endpoint, {
+      const res = await fetch(`${base}/questions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          category: category || undefined,
-          difficulty,
-          manualQuestions: mode === "manual" && manualQuestions.trim() ? manualQuestions : undefined,
-          sourceMaterial: mode === "source" && sourceMaterial.trim() ? sourceMaterial : undefined,
-          autoUpload,
-          privacy,
-        }),
+        body: JSON.stringify(requestBody()),
       });
       const data = await res.json();
       if (data.success) {
-        const warn = data.warnings?.length ? `\n⚠️ ${data.warnings.join(" | ")}` : "";
-        const up = data.youtubeUrl ? `
-🚀 Uploaded (${privacy}): ${data.youtubeUrl}` : "";
-        setResult(`✅ Project #${data.projectId} — ${data.durationSeconds}s, ${data.category}${up}${warn}`);
+        setPreview(data.questions || []);
+        setPreviewWarnings(data.warnings || []);
       } else {
         setResult(`❌ ${data.error}`);
       }
     } catch {
-      setResult("❌ Generation தோல்வி — server log பாருங்கள்");
+      setResult("❌ கேள்விகள் உருவாக்க முடியவில்லை — server log பாருங்கள்");
     } finally {
-      setBusy(false);
+      setPreviewBusy(false);
+    }
+  };
+
+  // Render the previewed-and-approved questions into a video.
+  const renderVideo = async () => {
+    if (!preview || preview.length === 0) return;
+    setRendering(true);
+    setResult("⏳ படங்கள் generate ஆகி, video render ஆகுது — சில நிமிடம் ஆகும்...");
+    try {
+      const res = await fetch(`${base}/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...requestBody(), questions: preview, autoUpload, privacy }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        const warn = data.warnings?.length ? `\n⚠️ ${data.warnings.join(" | ")}` : "";
+        const up = data.youtubeUrl ? `\n🚀 Uploaded (${privacy}): ${data.youtubeUrl}` : "";
+        setResult(`✅ Project #${data.projectId} — ${data.durationSeconds}s, ${data.category}${up}${warn}`);
+        setPreview(null);
+      } else {
+        setResult(`❌ ${data.error}`);
+      }
+    } catch {
+      setResult("❌ Render தோல்வி — server log பாருங்கள்");
+    } finally {
+      setRendering(false);
     }
   };
 
@@ -271,17 +315,89 @@ function QuizPanel({ channel }: { channel: string }) {
         </>
       )}
 
-      <button
-        onClick={generate}
-        disabled={busy}
-        style={{
-          padding: "12px 22px", borderRadius: 10, border: "none", cursor: busy ? "not-allowed" : "pointer",
-          background: busy ? "rgba(255,255,255,0.1)" : "linear-gradient(90deg, #F57C1F, #FFC93C)",
-          color: busy ? "#707090" : "#101014", fontSize: 14, fontWeight: 700,
-        }}
-      >
-        {busy ? "⏳ Generate ஆகுது..." : "❓ Quiz Short உருவாக்கு"}
-      </button>
+      {/* Step 1 — preview. Nothing renders until the user has seen and
+          approved the questions. */}
+      {!preview && (
+        <button
+          onClick={loadPreview}
+          disabled={previewBusy}
+          style={{
+            padding: "12px 22px", borderRadius: 10, border: "none", cursor: previewBusy ? "not-allowed" : "pointer",
+            background: previewBusy ? "rgba(255,255,255,0.1)" : "linear-gradient(90deg, #F57C1F, #FFC93C)",
+            color: previewBusy ? "#707090" : "#101014", fontSize: 14, fontWeight: 700,
+          }}
+        >
+          {previewBusy ? "⏳ கேள்விகள் உருவாகி verify ஆகுது..." : "🔍 கேள்விகளை முதலில் பார் (Preview)"}
+        </button>
+      )}
+
+      {/* Step 2 — review, then regenerate or render. */}
+      {preview && (
+        <div style={{ marginTop: 4 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: "#e0e0f0", marginBottom: 10 }}>
+            📋 {preview.length} கேள்வி — சரிபார்க்கப்பட்டது. பிடிச்சிருந்தா render பண்ணுங்க, இல்லேன்னா மீண்டும் உருவாக்குங்க.
+          </div>
+
+          {preview.map((q, i) => (
+            <div key={i} style={{ background: "#0f0f1e", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, padding: 12, marginBottom: 10 }}>
+              <div style={{ fontSize: 13.5, fontWeight: 700, color: "#fff", marginBottom: 8 }}>
+                {i + 1}. {q.question}
+              </div>
+              {(["A", "B", "C"] as const).map((letter) => {
+                const text = letter === "A" ? q.choiceA : letter === "B" ? q.choiceB : q.choiceC;
+                const isCorrect = q.correct === letter;
+                return (
+                  <div
+                    key={letter}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 8, fontSize: 13, padding: "4px 8px", borderRadius: 6,
+                      marginBottom: 3, background: isCorrect ? "rgba(45,212,167,0.16)" : "transparent",
+                      color: isCorrect ? "#5eead4" : "#b8b8d0", fontWeight: isCorrect ? 700 : 400,
+                    }}
+                  >
+                    <span style={{ opacity: 0.8 }}>{letter}.</span>
+                    <span>{text}</span>
+                    {isCorrect && <span style={{ marginLeft: "auto" }}>✅ சரி</span>}
+                  </div>
+                );
+              })}
+              {q.explanation && (
+                <div style={{ fontSize: 11.5, color: "#9090b0", marginTop: 6, fontStyle: "italic" }}>💡 {q.explanation}</div>
+              )}
+            </div>
+          ))}
+
+          {previewWarnings.length > 0 && (
+            <div style={{ fontSize: 11.5, color: "#fbbf24", marginBottom: 10 }}>⚠️ {previewWarnings.join(" | ")}</div>
+          )}
+
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button
+              onClick={loadPreview}
+              disabled={previewBusy || rendering}
+              style={{
+                padding: "11px 18px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.2)",
+                cursor: previewBusy || rendering ? "not-allowed" : "pointer",
+                background: "rgba(255,255,255,0.06)", color: "#e0e0f0", fontSize: 13.5, fontWeight: 700,
+              }}
+            >
+              {previewBusy ? "⏳ மீண்டும் உருவாகுது..." : "🔄 மீண்டும் உருவாக்கு (Regenerate)"}
+            </button>
+            <button
+              onClick={renderVideo}
+              disabled={previewBusy || rendering}
+              style={{
+                padding: "11px 22px", borderRadius: 10, border: "none",
+                cursor: previewBusy || rendering ? "not-allowed" : "pointer",
+                background: rendering ? "rgba(255,255,255,0.1)" : "linear-gradient(90deg, #22c55e, #16a34a)",
+                color: rendering ? "#707090" : "#fff", fontSize: 13.5, fontWeight: 700,
+              }}
+            >
+              {rendering ? "⏳ Render ஆகுது..." : "🎬 இந்த கேள்விகளுடன் Video உருவாக்கு"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {result && (
         <div style={{ marginTop: 12, fontSize: 13, color: "#c0c0d8", whiteSpace: "pre-wrap" }}>{result}</div>
