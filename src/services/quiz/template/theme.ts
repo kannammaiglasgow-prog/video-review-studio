@@ -3,7 +3,12 @@
  * wordmark and wording change, and those live in ../brand.ts so a new channel
  * can never move a card or resize a button by accident. */
 
-export const CANVAS = { width: 1080, height: 1920, fps: 30 } as const;
+// 15fps: each frame is an expensive SVG rasterisation, so halving the frame
+// count roughly halves the render time. The quiz is mostly static (the moving
+// parts are the countdown ring and the card entrances), so 15fps stays smooth
+// enough while cutting the biggest cost. Audio is a separate track and is
+// completely unaffected by the frame rate.
+export const CANVAS = { width: 1080, height: 1920, fps: 15 } as const;
 
 export const LAYOUT = {
   safeX: 60,

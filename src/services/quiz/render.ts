@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import os from "node:os";
 import sharp from "sharp";
 import { runFfmpeg } from "@/services/render/ffmpeg";
 import { probeAudioDuration } from "@/services/render/ffprobe";
@@ -286,7 +287,9 @@ async function buildAudio(
 async function renderFrames(b: QuizBrand, timeline: Timeline, framesDir: string, mascot: string | null): Promise<number> {
   await fs.mkdir(framesDir, { recursive: true });
   const frameCount = Math.ceil(timeline.total * CANVAS.fps);
-  const CONCURRENCY = 4;
+  // Rasterising frames is the dominant cost, so use most of the machine —
+  // leaving two cores for TTS, ffmpeg and the OS.
+  const CONCURRENCY = Math.max(4, Math.min(os.cpus().length - 2, 16));
 
   let next = 0;
   const worker = async () => {
