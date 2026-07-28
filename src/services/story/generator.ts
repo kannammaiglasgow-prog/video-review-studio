@@ -12,37 +12,78 @@ function key() {
 
 type CostCtx = { storyId: number; step: string };
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** Transient Gemini failures worth retrying: overload ("high demand"), rate
+ * limits and gateway errors. 400/401/403 are permanent (bad prompt / key /
+ * quota) and are surfaced immediately. */
+function isTransientStatus(status: number): boolean {
+  return status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
 export async function geminiText(prompt: string, temperature = 0.7, cost?: CostCtx): Promise<string> {
-  const response = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-goog-api-key": key() },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      // gemini-2.5-flash is a thinking model. Unbounded thinking tokens vary
-      // wildly run-to-run (observed 1.8k–11k) and count against the output
-      // budget — on heavy-thinking runs the model spends the whole budget
-      // thinking and returns empty parts, surfacing as "Gemini பதில் காலியாக
-      // உள்ளது". These are deterministic JSON generation calls that need no
-      // reasoning, so disable thinking and cap output explicitly.
-      generationConfig: {
-        responseMimeType: "application/json",
-        temperature,
-        thinkingConfig: { thinkingBudget: 0 },
-        maxOutputTokens: 8192,
-      },
-    }),
-  });
-  const data = await response.json();
-  if (!response.ok) throw new Error(data?.error?.message || `Gemini API ${response.status}`);
-  if (cost?.storyId) {
-    const pt = data?.usageMetadata?.promptTokenCount || 0;
-    const ct = data?.usageMetadata?.candidatesTokenCount || 0;
-    const amount = pt * (0.075 / 1_000_000) + ct * (0.30 / 1_000_000);
-    if (amount > 0) addStoryCost(cost.storyId, cost.step, amount);
+  // Up to 4 attempts with easing backoff — Gemini's "currently experiencing
+  // high demand" (503) is common and almost always clears within seconds, so a
+  // single spike shouldn't fail a whole render or preview.
+  const backoffs = [1500, 4000, 9000];
+  let lastError: Error | null = null;
+
+  for (let attempt = 0; attempt <= backoffs.length; attempt += 1) {
+    try {
+      const response = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": key() },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          // gemini-2.5-flash is a thinking model. Unbounded thinking tokens vary
+          // wildly run-to-run (observed 1.8k–11k) and count against the output
+          // budget — on heavy-thinking runs the model spends the whole budget
+          // thinking and returns empty parts, surfacing as "Gemini பதில் காலியாக
+          // உள்ளது". These are deterministic JSON generation calls that need no
+          // reasoning, so disable thinking and cap output explicitly.
+          generationConfig: {
+            responseMimeType: "application/json",
+            temperature,
+            thinkingConfig: { thinkingBudget: 0 },
+            maxOutputTokens: 8192,
+          },
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        const err = new Error(data?.error?.message || `Gemini API ${response.status}`);
+        // Retry transient server-side failures; surface permanent ones at once.
+        if (isTransientStatus(response.status) && attempt < backoffs.length) {
+          lastError = err;
+          console.log(`[gemini] ${response.status} (attempt ${attempt + 1}) — retrying in ${backoffs[attempt]}ms`);
+          await sleep(backoffs[attempt]);
+          continue;
+        }
+        throw err;
+      }
+      if (cost?.storyId) {
+        const pt = data?.usageMetadata?.promptTokenCount || 0;
+        const ct = data?.usageMetadata?.candidatesTokenCount || 0;
+        const amount = pt * (0.075 / 1_000_000) + ct * (0.30 / 1_000_000);
+        if (amount > 0) addStoryCost(cost.storyId, cost.step, amount);
+      }
+      const text = data?.candidates?.[0]?.content?.parts?.map((part: { text?: string }) => part.text || "").join("");
+      if (!text) throw new Error("Gemini பதில் காலியாக உள்ளது");
+      return text;
+    } catch (err) {
+      // Network-level failures (fetch reject) are also worth a retry.
+      const e = err instanceof Error ? err : new Error(String(err));
+      const isNetwork = !/Gemini|காலியாக/.test(e.message);
+      if (isNetwork && attempt < backoffs.length) {
+        lastError = e;
+        console.log(`[gemini] network error (attempt ${attempt + 1}) — retrying in ${backoffs[attempt]}ms: ${e.message}`);
+        await sleep(backoffs[attempt]);
+        continue;
+      }
+      throw e;
+    }
   }
-  const text = data?.candidates?.[0]?.content?.parts?.map((part: { text?: string }) => part.text || "").join("");
-  if (!text) throw new Error("Gemini பதில் காலியாக உள்ளது");
-  return text;
+  throw lastError ?? new Error("Gemini request failed");
 }
 
 export function parseJson<T>(raw: string): T {
