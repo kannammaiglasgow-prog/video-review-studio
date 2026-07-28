@@ -58,17 +58,20 @@ export function defs(b: QuizBrand): string {
     <stop offset="55%" stop-color="${c.accentMid}"/>
     <stop offset="100%" stop-color="${c.accentDeep}"/>
   </linearGradient>
-  <filter id="softGlow" x="-40%" y="-40%" width="180%" height="180%">
-    <feGaussianBlur stdDeviation="14" result="b"/>
-    <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-  </filter>
-  <filter id="cardShadow" x="-25%" y="-25%" width="150%" height="150%">
-    <feDropShadow dx="0" dy="10" stdDeviation="16" flood-color="${c.cardInk}" flood-opacity="0.55"/>
-  </filter>
-  <filter id="textShadow" x="-25%" y="-25%" width="150%" height="150%">
-    <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="${c.cardInk}" flood-opacity="0.7"/>
-  </filter>
 </defs>`;
+}
+
+/** Filter-free drop shadow: a few progressively larger, fainter offset
+ * rounded-rects fake a blurred penumbra. This is the single biggest render
+ * saving in the template — an SVG feDropShadow/feGaussianBlur filter costs
+ * roughly two-thirds of the whole frame's rasterisation time (librsvg builds a
+ * filter-region buffer per element, per frame), while these are plain shapes.
+ * Emit it immediately BEFORE the shape it sits under, so the shape covers the
+ * centre and only the offset rim reads as shadow. */
+export function softShadow(x: number, y: number, w: number, h: number, rx: number): string {
+  const layer = (s: number, dy: number, op: number) =>
+    `<rect x="${(x - s).toFixed(1)}" y="${(y - s + dy).toFixed(1)}" width="${(w + 2 * s).toFixed(1)}" height="${(h + 2 * s).toFixed(1)}" rx="${(rx + s).toFixed(1)}" fill="#080826" fill-opacity="${op}"/>`;
+  return `${layer(10, 15, 0.09)}${layer(5, 12, 0.14)}${layer(1, 9, 0.2)}`;
 }
 
 /** Full-bleed game-show background: gradient, glow pools and a subtle grid. */
@@ -112,12 +115,17 @@ export function header(b: QuizBrand, mascotHref: string | null): string {
   const anchor = mascotHref ? "start" : "middle";
   const anchorX = mascotHref ? startX.toFixed(1) : String(CANVAS.width / 2);
 
+  // A dark offset copy behind the wordmark stands in for the (costly) blur
+  // filter. It reuses the SAME two-tspan structure as the real text so the
+  // glyphs land in exactly the same places — a plain-text copy kerns the space
+  // slightly differently and ghosts.
+  const spans = (firstFill: string, secondFill: string, extra = "") =>
+    `<tspan fill="${firstFill}"${extra}>${esc(first)} </tspan><tspan fill="${secondFill}"${extra}>${esc(second)}</tspan>`;
+  const wordmark = (dy: number, inner: string) =>
+    `<text x="${anchorX}" y="${(wordmarkY + dy).toFixed(1)}" font-family="${b.fontStack}" font-size="${fontSize}" font-weight="bold" text-anchor="${anchor}" letter-spacing="2">${inner}</text>`;
   return `${mascot}
-<g filter="url(#textShadow)">
-  <text x="${anchorX}" y="${wordmarkY}" font-family="${b.fontStack}" font-size="${fontSize}" font-weight="bold" text-anchor="${anchor}" letter-spacing="2">
-    <tspan fill="${c.white}">${esc(first)} </tspan><tspan fill="url(#goldGrad)">${esc(second)}</tspan>
-  </text>
-</g>`;
+${wordmark(3, spans("#0a0a2e", "#0a0a2e", ' fill-opacity="0.4"'))}
+${wordmark(0, spans(c.white, "url(#goldGrad)"))}`;
 }
 
 /** "QUESTION x / y" pill plus the animated progress bar beneath it. */
@@ -130,9 +138,8 @@ export function progressIndicator(b: QuizBrand, current: number, total: number, 
   const pillLabel = b.strings.questionPill(current, total);
   const { fontSize } = fitText(pillLabel, pillW - 40, 1, 30, 17);
 
-  return `<g filter="url(#cardShadow)">
-  <rect x="${pillX}" y="${pillY}" width="${pillW}" height="${pillH}" rx="${pillH / 2}" fill="url(#pillGrad)" stroke="${c.optionStroke}" stroke-opacity="0.6" stroke-width="2"/>
-</g>
+  return `${softShadow(pillX, pillY, pillW, pillH, pillH / 2)}
+<rect x="${pillX}" y="${pillY}" width="${pillW}" height="${pillH}" rx="${pillH / 2}" fill="url(#pillGrad)" stroke="${c.optionStroke}" stroke-opacity="0.6" stroke-width="2"/>
 <text x="${CANVAS.width / 2}" y="${pillY + 39}" font-family="${b.fontStack}" font-size="${fontSize}" font-weight="bold" fill="${c.white}" text-anchor="middle" letter-spacing="2">${esc(pillLabel)}</text>
 <rect x="${progressX}" y="${progressY}" width="${progressW}" height="${progressH}" rx="${progressH / 2}" fill="#0b1440" fill-opacity="0.55" stroke="${c.panelStroke}" stroke-opacity="0.35" stroke-width="2"/>
 ${fill > 4 ? `<rect x="${progressX}" y="${progressY}" width="${fill.toFixed(1)}" height="${progressH}" rx="${progressH / 2}" fill="url(#barGrad)"/>` : ""}`;
@@ -152,11 +159,12 @@ export function countdownTimer(b: QuizBrand, secondsLeft: number, ringProgress: 
   return `<g transform="translate(${timerCx} ${timerCy}) scale(${pulse.toFixed(3)}) translate(${-timerCx} ${-timerCy})">
   <circle cx="${timerCx}" cy="${timerCy}" r="${timerR + 14}" fill="#0b1440" fill-opacity="0.5"/>
   <circle cx="${timerCx}" cy="${timerCy}" r="${timerR}" fill="#101a5c" stroke="#1e2a8a" stroke-width="${timerStroke}"/>
-  <g filter="url(#softGlow)">
-    <circle cx="${timerCx}" cy="${timerCy}" r="${timerR}" fill="none" stroke="${ringColor}" stroke-width="${timerStroke}"
-      stroke-linecap="round" stroke-dasharray="${dash.toFixed(1)} ${circumference.toFixed(1)}"
-      transform="rotate(-90 ${timerCx} ${timerCy})"/>
-  </g>
+  <circle cx="${timerCx}" cy="${timerCy}" r="${timerR}" fill="none" stroke="${ringColor}" stroke-opacity="0.3" stroke-width="${timerStroke + 12}"
+    stroke-linecap="round" stroke-dasharray="${dash.toFixed(1)} ${circumference.toFixed(1)}"
+    transform="rotate(-90 ${timerCx} ${timerCy})"/>
+  <circle cx="${timerCx}" cy="${timerCy}" r="${timerR}" fill="none" stroke="${ringColor}" stroke-width="${timerStroke}"
+    stroke-linecap="round" stroke-dasharray="${dash.toFixed(1)} ${circumference.toFixed(1)}"
+    transform="rotate(-90 ${timerCx} ${timerCy})"/>
   <text x="${timerCx}" y="${timerCy + 10}" font-family="${b.fontStack}" font-size="62" font-weight="bold" fill="${c.white}" text-anchor="middle">${Math.max(0, Math.ceil(secondsLeft))}</text>
   <text x="${timerCx}" y="${timerCy + 52}" font-family="${b.fontStack}" font-size="${secSize}" font-weight="bold" fill="${c.panelStroke}" text-anchor="middle" letter-spacing="2">${esc(b.strings.sec)}</text>
 </g>`;
@@ -180,9 +188,8 @@ export function questionCard(b: QuizBrand, question: string, enter: number): str
     .join("\n");
 
   return `<g opacity="${opacity.toFixed(3)}" transform="translate(0 ${offsetY.toFixed(1)})">
-  <g filter="url(#cardShadow)">
-    <rect x="${questionX}" y="${questionY}" width="${questionW}" height="${questionH}" rx="34" fill="${c.cardWhite}" stroke="${c.panelStroke}" stroke-width="5"/>
-  </g>
+  ${softShadow(questionX, questionY, questionW, questionH, 34)}
+  <rect x="${questionX}" y="${questionY}" width="${questionW}" height="${questionH}" rx="34" fill="${c.cardWhite}" stroke="${c.panelStroke}" stroke-width="5"/>
   ${text}
 </g>`;
 }
@@ -243,18 +250,16 @@ export function answerOption(
   const correctWord = b.strings.correct;
   const { fontSize: correctSize } = fitText(correctWord, 200, 1, 24, 14);
   const correctMark = isCorrect
-    ? `<g filter="url(#softGlow)">
-    <circle cx="${optionX + optionW - 108}" cy="${y + optionH / 2 - 12}" r="42" fill="${c.white}"/>
+    ? `<circle cx="${optionX + optionW - 108}" cy="${y + optionH / 2 - 12}" r="48" fill="${c.white}" fill-opacity="0.25"/>
+  <circle cx="${optionX + optionW - 108}" cy="${y + optionH / 2 - 12}" r="42" fill="${c.white}"/>
     <path d="M${optionX + optionW - 130} ${y + optionH / 2 - 12} l16 17 l30 -34" fill="none" stroke="${c.correctBottom}" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
-  </g>
   <text x="${optionX + optionW - 108}" y="${y + optionH / 2 + 58}" font-family="${b.fontStack}" font-size="${correctSize}" font-weight="bold" fill="${c.white}" text-anchor="middle" letter-spacing="1">${esc(correctWord)}</text>`
     : "";
 
   const scale = isReading ? 1.015 : 0.985 + 0.015 * e;
   return `<g opacity="${opacity}" transform="translate(${(CANVAS.width * (1 - scale) / 2).toFixed(1)} ${(y * (1 - scale)).toFixed(1)}) scale(${scale.toFixed(4)})">
-  <g filter="url(#cardShadow)">
-    <rect x="${optionX}" y="${y}" width="${optionW}" height="${optionH}" rx="26" fill="url(#${fillId})" stroke="${stroke}" stroke-width="${strokeW}"/>
-  </g>
+  ${softShadow(optionX, y, optionW, optionH, 26)}
+  <rect x="${optionX}" y="${y}" width="${optionW}" height="${optionH}" rx="26" fill="url(#${fillId})" stroke="${stroke}" stroke-width="${strokeW}"/>
   <path d="${badgePath}" fill="${isCorrect ? c.correctBottom : "url(#badgeGrad)"}" stroke="${c.white}" stroke-opacity="0.5" stroke-width="3"/>
   <text x="${optionX + (badgeW - notch) / 2 + 4}" y="${y + optionH / 2 + 22}" font-family="${b.fontStack}" font-size="66" font-weight="bold" fill="${c.white}" text-anchor="middle">${esc(letter)}</text>
   ${thumb}
@@ -285,9 +290,8 @@ export function quickFactCard(b: QuizBrand, explanation: string, enter: number):
   const { fontSize: tagSize } = fitText(b.strings.quickFact, tagW - 26, 1, 24, 13);
 
   return `<g opacity="${e.toFixed(3)}" transform="translate(0 ${offsetY.toFixed(1)})">
-  <g filter="url(#cardShadow)">
-    <rect x="${factX}" y="${factY}" width="${factW}" height="${factH}" rx="30" fill="${c.cardWhite}" stroke="${c.panelStroke}" stroke-width="4"/>
-  </g>
+  ${softShadow(factX, factY, factW, factH, 30)}
+  <rect x="${factX}" y="${factY}" width="${factW}" height="${factH}" rx="30" fill="${c.cardWhite}" stroke="${c.panelStroke}" stroke-width="4"/>
   <circle cx="${bulbCx}" cy="${bulbCy}" r="72" fill="#e0f2fe" stroke="#bae6fd" stroke-width="4"/>
   <path d="M${bulbCx} ${bulbCy - 42} a34 34 0 0 1 20 61 v14 h-40 v-14 a34 34 0 0 1 20 -61 z" fill="#fbbf24" stroke="#f59e0b" stroke-width="3"/>
   <rect x="${bulbCx - 17}" y="${bulbCy + 34}" width="34" height="9" rx="4" fill="#9ca3af"/>
@@ -334,9 +338,8 @@ export function ctaBanner(b: QuizBrand, kind: "like" | "subscribe", enter: numbe
        <path d="M${cx - 14} ${cy + 32} a14 14 0 0 0 28 0 z" fill="#ffffff"/>`;
 
   return `<g opacity="${e.toFixed(3)}" transform="translate(0 ${((1 - e) * 40).toFixed(1)})">
-  <g filter="url(#cardShadow)">
-    <rect x="${factX}" y="${y}" width="${factW}" height="${h}" rx="30" fill="url(#pillGrad)" stroke="${c.cyan}" stroke-width="5"/>
-  </g>
+  ${softShadow(factX, y, factW, h, 30)}
+  <rect x="${factX}" y="${y}" width="${factW}" height="${h}" rx="30" fill="url(#pillGrad)" stroke="${c.cyan}" stroke-width="5"/>
   <circle cx="${cx}" cy="${cy}" r="76" fill="#ffffff" fill-opacity="0.18"/>
   ${icon}
   <text x="${factX + 250}" y="${y + 96}" font-family="${b.fontStack}" font-size="${headSize}" font-weight="bold" fill="#ffffff" letter-spacing="1">${esc(heading)}</text>
@@ -370,16 +373,14 @@ export function outroCard(b: QuizBrand, enter: number): string {
 
   return `<g opacity="${e.toFixed(3)}">
   ${titleLines.map(({ line, y }) => text(line, y, title.fontSize, c.white)).join("\n  ")}
-  <g filter="url(#cardShadow)">
-    <rect x="150" y="900" width="780" height="118" rx="59" fill="url(#pillGrad)" stroke="${c.optionStroke}" stroke-width="4"/>
-  </g>
+  ${softShadow(150, 900, 780, 118, 59)}
+  <rect x="150" y="900" width="780" height="118" rx="59" fill="url(#pillGrad)" stroke="${c.optionStroke}" stroke-width="4"/>
   ${text(pill.lines.join(" "), 976, pill.fontSize, c.white)}
 
   ${text(thanks.lines.join(" "), 1150, thanks.fontSize, c.highlight)}
 
-  <g filter="url(#cardShadow)">
-    <rect x="90" y="1230" width="900" height="200" rx="34" fill="${c.cardWhite}" stroke="${c.panelStroke}" stroke-width="4"/>
-  </g>
+  ${softShadow(90, 1230, 900, 200, 34)}
+  <rect x="90" y="1230" width="900" height="200" rx="34" fill="${c.cardWhite}" stroke="${c.panelStroke}" stroke-width="4"/>
   ${shareLines.map(({ line, y }) => text(line, y, share.fontSize, c.cardInk)).join("\n  ")}
 
   ${text(follow.lines.join(" "), 1530, follow.fontSize, c.panelStroke, ` letter-spacing="3"`)}
