@@ -542,9 +542,11 @@ export async function renderVideo(spec: RenderSpec) {
     
     let videoChain = "";
     if (spec.subtitlePath) {
-      const escapedSub = spec.subtitlePath.replaceAll("\\", "/").replace(":", "\\:");
+      const escapedSub = path.relative(process.cwd(), spec.subtitlePath)
+        .replaceAll("\\", "/")
+        .replaceAll("'", "\\'");
       videoChain = `[0:v]scale=${width}:${halfH}:force_original_aspect_ratio=increase,crop=${width}:${halfH}[mid_crop]; ` +
-                   `[mid_crop]subtitles=${escapedSub}[mid_subs]; `;
+                   `[mid_crop]subtitles=filename='${escapedSub}'[mid_subs]; `;
     } else {
       videoChain = `[0:v]scale=${width}:${halfH}:force_original_aspect_ratio=increase,crop=${width}:${halfH}[mid_subs]; `;
     }
@@ -577,7 +579,10 @@ export async function renderVideo(spec: RenderSpec) {
     
     let filterString = "";
     if (spec.subtitlePath) {
-      filterString += `subtitles=${spec.subtitlePath.replaceAll("\\", "/").replace(":", "\\:")}`;
+      const escapedSub = path.relative(process.cwd(), spec.subtitlePath)
+        .replaceAll("\\", "/")
+        .replaceAll("'", "\\'");
+      filterString += `subtitles=filename='${escapedSub}'`;
     }
     if (spec.ctaEnabled && spec.ctaPosition) {
       const boxW = Math.round(width * 0.7);

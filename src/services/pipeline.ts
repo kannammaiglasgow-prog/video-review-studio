@@ -3,7 +3,7 @@ import path from "node:path";
 import { database } from "@/lib/database";
 import { config, type OutputLanguage, type VideoStyleConfig } from "@/lib/config";
 import { recommendTransitions, transitionPresetsMap } from "../../packages/transition-library/src";
-import { createVideoMetadata, geminiReviewProvider, geminiSpeechProvider } from "./providers/gemini";
+import { createVideoMetadata, geminiReviewProvider, geminiSpeechProvider, polishTamilNewsScript } from "./providers/gemini";
 import { alignSceneCount, localTitleFromText, resolveSceneKeywords } from "./providers/keywords";
 import { buildScenePlan } from "./providers/sentences";
 import { downloadScenedStockMedia, searchStockMedia, downloadApprovedClips, searchStockImages } from "./providers/stock-media";
@@ -29,6 +29,148 @@ const AUDIO_TAIL_SECONDS = 0.5;
 async function finalRenderDuration(requestedDuration: string, audioPath: string, ignoreRequestedDuration = false) {
   const audioSeconds = await probeAudioDuration(audioPath);
   return audioSeconds + AUDIO_TAIL_SECONDS;
+}
+
+function assTime(seconds: number) {
+  const safe = Math.max(0, seconds);
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const secs = Math.floor(safe % 60);
+  const centiseconds = Math.floor((safe - Math.floor(safe)) * 100);
+  return `${hours}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}.${String(centiseconds).padStart(2, "0")}`;
+}
+
+function assText(value: string) {
+  return value
+    .normalize("NFC")
+    .replace(/\r?\n+/g, " ")
+    .replace(/[{}]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function visibleTextLength(value: string) {
+  return Array.from(value.normalize("NFC"))
+    .filter((character) => !/\p{Mark}/u.test(character))
+    .length;
+}
+
+function wrapOverlayText(value: string, maxCharactersPerLine: number) {
+  const words = assText(value).split(" ").filter(Boolean);
+  const lines: string[] = [];
+  let currentLine = "";
+  for (const word of words) {
+    const candidate = currentLine ? `${currentLine} ${word}` : word;
+    if (currentLine && visibleTextLength(candidate) > maxCharactersPerLine) {
+      lines.push(currentLine);
+      currentLine = word;
+    } else {
+      currentLine = candidate;
+    }
+  }
+  if (currentLine) lines.push(currentLine);
+  return lines.join("\\N");
+}
+
+function groupCaptionWords(
+  words: string[],
+  maxCharactersPerLine: number,
+  maxLines: number,
+) {
+  const groups: string[][] = [];
+  let group: string[] = [];
+  let line = "";
+  let lineCount = 1;
+  for (const word of words) {
+    const candidate = line ? `${line} ${word}` : word;
+    if (line && visibleTextLength(candidate) > maxCharactersPerLine) {
+      if (lineCount >= maxLines) {
+        groups.push(group);
+        group = [];
+        lineCount = 1;
+      } else {
+        lineCount += 1;
+      }
+      line = word;
+    } else {
+      line = candidate;
+    }
+    group.push(word);
+  }
+  if (group.length) groups.push(group);
+  return groups;
+}
+
+export async function writeNewsTextOverlay(
+  title: string,
+  script: string,
+  duration: number,
+  aspectRatio: "9:16" | "16:9",
+  outputPath: string,
+) {
+  const portrait = aspectRatio === "9:16";
+  const width = portrait ? 1080 : 1920;
+  const height = portrait ? 1920 : 1080;
+  const words = assText(script).split(" ").filter(Boolean);
+  const captionLineLength = portrait ? 22 : 48;
+  const groups = groupCaptionWords(words, captionLineLength, 2);
+  const totalWords = Math.max(1, words.length);
+  let cursor = 0;
+  const dialogues = groups.map((group) => {
+    const seconds = duration * (group.length / totalWords);
+    const start = cursor;
+    cursor += seconds;
+    return `Dialogue: 0,${assTime(start)},${assTime(Math.min(duration, cursor))},Caption,,0,0,0,,${wrapOverlayText(group.join(" "), captionLineLength)}`;
+  });
+  const header = `[Script Info]\nScriptType: v4.00+\nPlayResX: ${width}\nPlayResY: ${height}\nWrapStyle: 2\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\nStyle: Headline,Nirmala UI,${portrait ? 54 : 54},&H00FFFFFF,&H00FFFFFF,&H00101822,&H5008142A,-1,0,0,0,100,100,0,0,3,5,0,8,${portrait ? 80 : 130},${portrait ? 80 : 130},${portrait ? 105 : 45},1\nStyle: Caption,Nirmala UI,${portrait ? 46 : 48},&H00FFFFFF,&H00FFFFFF,&H00000000,&H50000000,-1,0,0,0,100,100,0,0,3,5,0,2,${portrait ? 80 : 160},${portrait ? 80 : 160},${portrait ? 165 : 65},1\n\n[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text`;
+  const headlineText = assText(title).split(" ").filter(Boolean).slice(0, portrait ? 8 : 14).join(" ");
+  const headline = `Dialogue: 1,${assTime(0)},${assTime(duration)},Headline,,0,0,0,,${wrapOverlayText(headlineText, portrait ? 20 : 48)}`;
+  await fs.writeFile(outputPath, `${header}\n${headline}\n${dialogues.join("\n")}\n`, "utf8");
+  return outputPath;
+}
+
+// Kinetic typography: one word at a time, pop-in + fade, centered — the default caption
+// style for every channel/style except "news_report" (which keeps its ticker-style headline).
+// Timing is approximated (no forced-alignment/ASR in this codebase): each word's on-screen
+// hold time is proportional to its character length, not real speech timing.
+export async function writeKineticCaptions(
+  script: string,
+  duration: number,
+  aspectRatio: "9:16" | "16:9",
+  outputPath: string,
+) {
+  const portrait = aspectRatio === "9:16";
+  const width = portrait ? 1080 : 1920;
+  const height = portrait ? 1920 : 1080;
+  const words = assText(script).split(" ").filter(Boolean);
+  if (words.length === 0) {
+    await fs.writeFile(outputPath, "[Script Info]\nScriptType: v4.00+\n\n[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n", "utf8");
+    return outputPath;
+  }
+  const fontSize = portrait ? 100 : 110;
+  // Gold fill, black outline, no box — a bold "hero" caption centered on screen.
+  const header = `[Script Info]\nScriptType: v4.00+\nPlayResX: ${width}\nPlayResY: ${height}\nWrapStyle: 2\nScaledBorderAndShadow: yes\n\n[V4+ Styles]\nFormat: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\nStyle: Kinetic,Nirmala UI,${fontSize},&H0000D7FF,&H0000D7FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,7,0,5,${portrait ? 60 : 140},${portrait ? 60 : 140},0,1\n\n[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text`;
+
+  const weights = words.map((word) => Math.max(3, visibleTextLength(word)));
+  const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+  const MIN_HOLD_SECONDS = 0.14;
+
+  let cursor = 0;
+  const dialogues = words.map((word, index) => {
+    const start = cursor;
+    const share = weights[index] / totalWeight;
+    const holdSeconds = Math.max(MIN_HOLD_SECONDS, duration * share);
+    cursor += holdSeconds;
+    const end = Math.min(duration, cursor);
+    const holdMs = Math.max(1, (end - start) * 1000);
+    const popMs = Math.min(90, Math.round(holdMs * 0.35));
+    // Pop in from 60% scale + transparent, overshoot to 102%, settle at 100%.
+    const tags = `{\\fscx60\\fscy60\\alpha&HFF&\\t(0,${popMs},\\fscx102\\fscy102\\alpha&H00&)\\t(${popMs},${popMs + 60},\\fscx100\\fscy100)}`;
+    return `Dialogue: 0,${assTime(start)},${assTime(end)},Kinetic,,0,0,0,,${tags}${assText(word)}`;
+  });
+
+  await fs.writeFile(outputPath, `${header}\n${dialogues.join("\n")}\n`, "utf8");
+  return outputPath;
 }
 
 export const AUTO_DURATION_LABEL = "ஆட்டோ — voice முடியும் வரை";
@@ -193,7 +335,10 @@ export async function processProject(projectId: number) {
         db.prepare("UPDATE projects SET transcript=? WHERE id=?").run(transcript, projectId);
 
         updateStatus("script");
-        const estimatedSceneCount = requiredClipCount(durationToSeconds(project.duration));
+        const requestedDurationSeconds = durationToSeconds(project.duration);
+        const estimatedSceneCount = project.aspect_ratio === "9:16"
+          ? requiredClipCount(requestedDurationSeconds)
+          : Math.max(1, Math.ceil(requestedDurationSeconds / 12));
         let script: string;
         let title: string;
         let geminiSceneKeywords: string[][] = [];
@@ -243,6 +388,61 @@ export async function processProject(projectId: number) {
           script = review.script;
           title = review.title;
           geminiSceneKeywords = review.sceneKeywords || [];
+
+          if (project.source_type === "news" && project.output_language === "ta") {
+            const polished = await polishTamilNewsScript({
+              title,
+              script,
+              sourceText: transcript,
+              isShort: project.aspect_ratio === "9:16",
+              projectId,
+            });
+            script = polished.script;
+            title = polished.title;
+          }
+          if (project.output_language === "ta") {
+            // Prefer the widely readable Tamil spelling. The aytham-based
+            // form can look like stray dots in small video captions.
+            script = script.replaceAll("ஃபிஜி", "பிஜி");
+            title = title.replaceAll("ஃபிஜி", "பிஜி");
+          }
+        }
+
+        // Automation prompts can declare an exact spoken-word range. Gemini
+        // occasionally returns a much shorter draft, so expand and validate
+        // it before TTS/stock downloads instead of rendering an undersized video.
+        const spokenWordRange = project.custom_instruction?.match(
+          /(?:narration must contain|write)\s+([\d,_]+)\s*[^0-9A-Za-z]{1,8}\s*([\d,_]+)\s+spoken(?:\s+[A-Za-z]+)?\s+words/i,
+        );
+        if (spokenWordRange) {
+          const minimumWords = Number(spokenWordRange[1].replace(/[, _]/g, ""));
+          const maximumWords = Number(spokenWordRange[2].replace(/[, _]/g, ""));
+          const countWords = (value: string) => value.trim().split(/\s+/u).filter(Boolean).length;
+          const distanceFromRange = (count: number) =>
+            count < minimumWords ? minimumWords - count : count > maximumWords ? count - maximumWords : 0;
+          for (let attempt = 0; attempt < 4 && distanceFromRange(countWords(script)) > 0; attempt += 1) {
+            const currentWordCount = countWords(script);
+            const adjustment = currentWordCount < minimumWords ? "too short" : "too long";
+            const adjusted = await geminiReviewProvider.createTamilScript(
+              `The draft below is ${adjustment}. Rewrite it to ${minimumWords}-${maximumWords} spoken words, strictly within that range. Preserve every verified source fact. Remove repetition and filler when shortening; add useful context only when it is explicitly present in the supplied source text when expanding. Never invent a place, currency, person, number, quote, cause, consequence, or connection. Keep the requested output language and natural voice-over style.\n\nSOURCE TEXT:\n${transcript}\n\nCURRENT TITLE:\n${title}\n\nCURRENT DRAFT:\n${script}`,
+              estimatedSceneCount,
+              projectId,
+            );
+            if (distanceFromRange(countWords(adjusted.script)) < distanceFromRange(currentWordCount)) {
+              script = adjusted.script;
+              title = adjusted.title;
+              geminiSceneKeywords = adjusted.sceneKeywords || geminiSceneKeywords;
+            }
+          }
+          const finalWordCount = countWords(script);
+          const allowedMaximumWords = project.aspect_ratio === "9:16"
+            ? maximumWords + 15
+            : maximumWords;
+          if (finalWordCount < minimumWords || finalWordCount > allowedMaximumWords) {
+            throw new Error(
+              `Script length validation failed: ${finalWordCount} words; required ${minimumWords}-${allowedMaximumWords}.`,
+            );
+          }
         }
 
         if (project.auto_approve === 1) {
@@ -297,7 +497,10 @@ export async function processProject(projectId: number) {
       }
 
       const targetDuration = await finalRenderDuration(project.duration, audioPath, isVoiceover || project.duration === AUTO_DURATION_LABEL);
-      const scenePlan = buildScenePlan(script, targetDuration, CLIP_DURATION_SECONDS);
+      // Shorts need rapid visual changes; long-form news should reuse each
+      // relevant shot longer so stock lookup and rendering stay practical.
+      const idealSceneSeconds = project.aspect_ratio === "9:16" ? CLIP_DURATION_SECONDS : 12;
+      const scenePlan = buildScenePlan(script, targetDuration, idealSceneSeconds);
 
       let title = "Video Review";
       let geminiSceneKeywords: string[][] = [];
@@ -448,10 +651,25 @@ export async function processProject(projectId: number) {
         seconds: scenes[index].seconds,
         transition: scenes[index].transition
       }));
+      const subtitlePath = project.video_style === "news_report"
+        ? await writeNewsTextOverlay(
+            title,
+            (project.review_script || project.transcript || "").trim(),
+            targetDuration,
+            project.aspect_ratio,
+            path.join(projectDir, "news-text-overlay.ass"),
+          )
+        : await writeKineticCaptions(
+            (project.review_script || project.transcript || "").trim(),
+            targetDuration,
+            project.aspect_ratio,
+            path.join(projectDir, "kinetic-captions.ass"),
+          );
       const rendered = await renderVideo({
         aspectRatio: project.aspect_ratio,
         audioPath,
         scenes: renderScenes,
+        subtitlePath,
         outputPath,
         targetDuration,
         styleConfig,
@@ -508,7 +726,8 @@ export async function rerenderProject(projectId: number) {
   const script = (project.review_script || project.transcript || "").trim();
   let clipPaths = await stockClipPaths(projectId);
   const targetDuration = await finalRenderDuration(project.duration, project.audio_path, project.source_type === "voiceover" || project.duration === AUTO_DURATION_LABEL);
-  const scenePlan = buildScenePlan(script, targetDuration, CLIP_DURATION_SECONDS);
+  const idealSceneSeconds = project.aspect_ratio === "9:16" ? CLIP_DURATION_SECONDS : 12;
+  const scenePlan = buildScenePlan(script, targetDuration, idealSceneSeconds);
   const requiredClips = scenePlan.length;
   if (clipPaths.length < requiredClips) {
     const job = db.prepare("SELECT payload FROM render_jobs WHERE project_id=? ORDER BY id DESC LIMIT 1").get(projectId) as { payload: string | null } | undefined;
@@ -524,10 +743,25 @@ export async function rerenderProject(projectId: number) {
   try {
     const outputPath = path.join(config.mediaRoot, String(projectId), `review-${project.aspect_ratio.replace(":", "x")}.mp4`);
     const scenes = clipPaths.map((clipPath, index) => ({ path: clipPath, seconds: scenePlan[index].seconds }));
+    const subtitlePath = project.video_style === "news_report"
+      ? await writeNewsTextOverlay(
+          "Tamil Politics Star",
+          script,
+          targetDuration,
+          project.aspect_ratio,
+          path.join(config.mediaRoot, String(projectId), "news-text-overlay.ass"),
+        )
+      : await writeKineticCaptions(
+          script,
+          targetDuration,
+          project.aspect_ratio,
+          path.join(config.mediaRoot, String(projectId), "kinetic-captions.ass"),
+        );
     await renderVideo({
       aspectRatio: project.aspect_ratio,
       audioPath: project.audio_path,
       scenes,
+      subtitlePath,
       outputPath,
       targetDuration,
       splitShortsEnabled: Boolean(project.split_shorts_enabled),

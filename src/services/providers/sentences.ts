@@ -26,6 +26,9 @@ export function buildScenePlan(script: string, totalSeconds: number, idealSceneS
   const totalWords = wordCounts.reduce((sum, count) => sum + count, 0);
   const rawSeconds = wordCounts.map((count) => (count / totalWords) * totalSeconds);
 
+  const minimumGroupSeconds = Math.max(MIN_SCENE_SECONDS, idealSceneSeconds * 0.75);
+  const maximumGroupSeconds = Math.max(MAX_SCENE_SECONDS, idealSceneSeconds * 1.5);
+
   // Merge pass: குறுகிய sentences-ஐ MIN_SCENE_SECONDS வரும் வரை அடுத்தடுத்து சேர்க்கும்
   const merged: ScenePlanEntry[] = [];
   let bufferText: string[] = [];
@@ -34,7 +37,7 @@ export function buildScenePlan(script: string, totalSeconds: number, idealSceneS
     bufferText.push(sentences[index]);
     bufferSeconds += rawSeconds[index];
     const isLast = index === sentences.length - 1;
-    if (bufferSeconds >= MIN_SCENE_SECONDS || isLast) {
+    if (bufferSeconds >= minimumGroupSeconds || isLast) {
       merged.push({ text: bufferText.join(" "), seconds: bufferSeconds });
       bufferText = [];
       bufferSeconds = 0;
@@ -48,7 +51,7 @@ export function buildScenePlan(script: string, totalSeconds: number, idealSceneS
   // Split pass: நீண்ட sentence-groups-ஐ ~idealSceneSeconds அளவு பல scenes-ஆக பிரிக்கும்
   const final: ScenePlanEntry[] = [];
   for (const scene of merged) {
-    if (scene.seconds <= MAX_SCENE_SECONDS) { final.push(scene); continue; }
+    if (scene.seconds <= maximumGroupSeconds) { final.push(scene); continue; }
     const parts = Math.max(2, Math.round(scene.seconds / idealSceneSeconds));
     const words = scene.text.split(/\s+/).filter(Boolean);
     const perPart = Math.ceil(words.length / parts);

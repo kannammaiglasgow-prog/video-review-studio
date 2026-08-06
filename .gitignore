@@ -32,9 +32,15 @@ server.out.log
 server.err.log
 .codex-dev.stderr.log
 .codex-dev.stdout.log
+devwin.log
+pixelle-server.err.log
+pixelle-server.out.log
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+
+# unwired experimental/scratch copies
+/src/services/.pilot-pipeline.ts
 
 # stray local db files (real db lives at /data/review-studio.sqlite)
 /database.sqlite

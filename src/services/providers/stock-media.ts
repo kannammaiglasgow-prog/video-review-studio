@@ -17,8 +17,8 @@ export const pexelsProvider: StockMediaProvider = {
     return (data.videos || []).flatMap((video: { id: number; width: number; height: number; user?: { name?: string }; video_files?: { link: string; width: number; height: number; file_type?: string }[] }) => {
       const file = video.video_files?.filter((item) => item.file_type === "video/mp4").sort((a, b) => {
         const aLargest = Math.max(a.width, a.height); const bLargest = Math.max(b.width, b.height);
-        const aOversized = aLargest > 1920 ? 1 : 0; const bOversized = bLargest > 1920 ? 1 : 0;
-        return aOversized - bOversized || (b.width * b.height) - (a.width * a.height);
+        const aUndersized = aLargest < 720 ? 1 : 0; const bUndersized = bLargest < 720 ? 1 : 0;
+        return aUndersized - bUndersized || Math.abs(aLargest - 1280) - Math.abs(bLargest - 1280);
       })[0];
       return file ? [{ provider: "pexels", id: String(video.id), url: file.link, width: file.width, height: file.height, attribution: video.user?.name }] : [];
     }) as StockAsset[];
@@ -34,7 +34,11 @@ export const pixabayProvider: StockMediaProvider = {
     if (!response.ok) throw new Error(`Pixabay API ${response.status}`);
     const data = await response.json();
     return (data.hits || []).flatMap((video: { id: number; user?: string; videos?: Record<string, { url: string; width: number; height: number }> }) => {
-      const files = Object.values(video.videos || {}).filter((item) => orientation === "portrait" ? item.height >= item.width : item.width >= item.height).sort((a, b) => b.width - a.width);
+      const files = Object.values(video.videos || {}).filter((item) => orientation === "portrait" ? item.height >= item.width : item.width >= item.height).sort((a, b) => {
+        const aLargest = Math.max(a.width, a.height); const bLargest = Math.max(b.width, b.height);
+        const aUndersized = aLargest < 720 ? 1 : 0; const bUndersized = bLargest < 720 ? 1 : 0;
+        return aUndersized - bUndersized || Math.abs(aLargest - 1280) - Math.abs(bLargest - 1280);
+      });
       const file = files[0];
       return file ? [{ provider: "pixabay", id: String(video.id), url: file.url, width: file.width, height: file.height, attribution: video.user }] : [];
     }) as StockAsset[];
@@ -359,10 +363,10 @@ export async function downloadApprovedClips(
   const files: (string | null)[] = new Array(sceneCount).fill(null);
   const downloadedPaths = new Map<string, string>(); // maps assetKey -> local file path
 
-  for (let index = 0; index < sceneCount; index += 1) {
+  const downloadScene = async (index: number) => {
     const scene = scenes[index];
     const asset = scene.chosenAsset;
-    if (!asset) continue;
+    if (!asset) return;
 
     const key = assetKey(asset);
     const existing = downloadedPaths.get(key);
@@ -372,7 +376,7 @@ export async function downloadApprovedClips(
         const filePath = path.join(staging, `stock-${index}${extension}`);
         await fs.copyFile(existing, filePath);
         files[index] = filePath;
-        continue;
+        return;
       } catch { /* ignore */ }
     }
 
@@ -386,7 +390,7 @@ export async function downloadApprovedClips(
           await fs.copyFile(localPath, filePath);
           files[index] = filePath;
           downloadedPaths.set(key, filePath);
-          continue;
+          return;
         } else {
           const projectDir = path.dirname(directory);
           const projectFiles = await fs.readdir(projectDir).catch(() => []);
@@ -398,7 +402,7 @@ export async function downloadApprovedClips(
             await fs.copyFile(foundPath, filePath);
             files[index] = filePath;
             downloadedPaths.set(key, filePath);
-            continue;
+            return;
           }
         }
       } catch (err) {
@@ -419,7 +423,7 @@ export async function downloadApprovedClips(
         ]);
         files[index] = filePath;
         downloadedPaths.set(key, filePath);
-        continue;
+        return;
       } catch (err) {
         console.error("Local clip slicing failed", err);
       }
@@ -427,17 +431,31 @@ export async function downloadApprovedClips(
 
     try {
       const response = await fetch(asset.url, { signal: AbortSignal.timeout(120_000) });
-      if (!response.ok) continue;
+      if (!response.ok) return;
       const data = Buffer.from(await response.arrayBuffer());
       const detectedImage = asset.kind === "image" ? detectImageType(data) : null;
-      if (asset.kind === "image" && !detectedImage) continue;
+      if (asset.kind === "image" && !detectedImage) return;
       const extension = detectedImage ? imageExtension(detectedImage) : ".mp4";
       const filePath = path.join(staging, `stock-${index}${extension}`);
       await fs.writeFile(filePath, data);
       downloadedPaths.set(key, filePath);
       files[index] = filePath;
-    } catch { continue; }
-  }
+    } catch { return; }
+  };
+
+  // A bounded worker pool keeps long-form stock downloads practical without
+  // overwhelming Pixabay/Pexels or the local network connection.
+  let nextSceneIndex = 0;
+  const workerCount = Math.min(6, sceneCount);
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (nextSceneIndex < sceneCount) {
+        const index = nextSceneIndex;
+        nextSceneIndex += 1;
+        await downloadScene(index);
+      }
+    }),
+  );
 
   const usedKeys = new Set<string>();
   for (let index = 0; index < sceneCount; index += 1) {

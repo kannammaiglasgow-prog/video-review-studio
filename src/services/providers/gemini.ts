@@ -209,6 +209,57 @@ export const geminiReviewProvider: ReviewProvider = {
   },
 };
 
+export async function polishTamilNewsScript(input: {
+  title: string;
+  script: string;
+  sourceText: string;
+  isShort: boolean;
+  projectId?: number;
+}): Promise<{ title: string; script: string }> {
+  const lengthRule = input.isShort
+    ? "இறுதி narration 90 முதல் 115 தமிழ் சொற்களுக்குள் இருக்க வேண்டும். முதல் வாக்கியமே நேரடியான, உண்மையான hook ஆக இருக்க வேண்டும்."
+    : "மூல script-ன் தகவல் அளவையும் நீளத்தையும் தேவையில்லாமல் குறைக்க வேண்டாம்.";
+  const result = await requestJson<{ title?: unknown; script?: unknown }>(
+    ["gemini-2.5-flash", "gemini-3.1-flash-lite"],
+    `நீங்கள் அனுபவமிக்க தமிழ் செய்தி ஆசிரியர். கீழே உள்ள draft narration-ஐ வெளியீட்டுக்கு முன் கவனமாகத் திருத்தவும்.
+
+கட்டாய விதிகள்:
+1. மூலச் செய்தியில் உறுதிப்படுத்தப்பட்ட தகவல்களை மட்டும் வைத்திருக்கவும். பெயர், பதவி, இடம், தேதி, எண், காரணம், மேற்கோள் அல்லது முடிவை புதிதாக உருவாக்க வேண்டாம்.
+2. எழுத்துப்பிழை, இலக்கணப் பிழை, தவறான வேற்றுமை உருபு, சொல் ஒத்திசைவு, நேரடி மொழிபெயர்ப்பு போன்ற இயல்பற்ற தமிழ் மற்றும் இரட்டை அர்த்தம் தரும் வாக்கியங்களைத் திருத்தவும்.
+3. செய்தி வாசிப்புக்கு ஏற்ற எளிய, தெளிவான, இயல்பான பேச்சுத் தமிழைப் பயன்படுத்தவும். உதாரணமாக “தூக்கிவிட்டனர்” போன்ற குழப்பமான சொல்லுக்கு, source ஆதரித்தால் “தூக்கி நிறுத்தினர்” போன்ற துல்லியமான சொல்லைப் பயன்படுத்தவும்.
+4. “பெரும் அதிர்ச்சி”, “அதிர்ச்சி தரும்”, “பரபரப்பு” போன்ற sensational சொற்களை மூலத் தகவல் தெளிவாக ஆதரிக்காவிட்டால் நீக்கவும். கருத்து அல்லது ஊகத்தை உண்மையாக எழுத வேண்டாம்.
+5. ஒரே தகவலை மீண்டும் சொல்லுதல், filler, “மேலும் அறிய இணைந்திருங்கள்” மற்றும் நீண்ட outro ஆகியவற்றை நீக்கவும்.
+6. Short என்றால் “வணக்கம்”, presenter அறிமுகம், channel பெயர் அல்லது logo intro-வில் தொடங்கக்கூடாது. முதல் வரியிலேயே முக்கிய verified fact வர வேண்டும்.
+7. தலைப்பு மற்றும் narration முழுவதும் தமிழில் இருக்க வேண்டும். அங்கீகரிக்கப்பட்ட பெயர்களை மட்டும் சரியான தமிழ் ஒலிபெயர்ப்பில் எழுதவும்.
+8. Caption-ஆகப் பிரித்தாலும் ஒவ்வொரு வாக்கியமும் தனியாகப் படிக்கும்போது பொருள் தெளிவாக இருக்க வேண்டும். குறுகிய வாக்கியங்களைப் பயன்படுத்தவும்.
+9. ${lengthRule}
+10. மூலச் செய்தி மற்றும் draft இடையே முரண்பாடு இருந்தால் மூலச் செய்திக்கே முன்னுரிமை கொடுக்கவும்.
+
+மூலச் செய்தி:
+${input.sourceText}
+
+Draft title:
+${input.title}
+
+Draft narration:
+${input.script}
+
+JSON மட்டும் பதிலளிக்கவும்: {"title":"திருத்தப்பட்ட தமிழ் தலைப்பு","script":"திருத்தப்பட்ட தமிழ் narration"}`,
+    0.2,
+    input.projectId,
+    "tamil-editor",
+  );
+  const title = typeof result.title === "string" ? result.title.trim() : "";
+  const script = typeof result.script === "string" ? result.script.trim() : "";
+  if (!title || !script) {
+    throw new Error("Tamil editor சரியான title அல்லது script திருப்பவில்லை");
+  }
+  if (input.isShort && /^(வணக்கம்|ஹலோ|நான்\s)/u.test(script)) {
+    throw new Error("Tamil editor validation failed: Short இன்னும் intro-வில் தொடங்குகிறது");
+  }
+  return { title, script };
+}
+
 export async function createVideoMetadata(script: string, language: OutputLanguage = "ta", sceneCount = 1, styleConfig?: VideoStyleConfig, projectId?: number): Promise<{ title: string; searchTerms: string[]; sceneKeywords: string[][] }> {
   const stylePrompt = styleConfig
     ? `\n\nவீடியோ தயாரிப்பு பாணி (Video Style): ${styleConfig.name}\nகாட்சி பாணி (Visual Style / Scene B-roll): ${styleConfig.promptConfig.visualInstructions}`

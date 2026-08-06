@@ -23,9 +23,29 @@ function run(cmd: string, args: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { windowsHide: true });
     let err = "";
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (error) reject(error);
+      else resolve();
+    };
+    child.stdout?.resume();
     child.stderr.on("data", (chunk) => (err += String(chunk)));
-    child.on("error", reject);
-    child.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`${cmd} exit ${code}: ${err.slice(-800)}`))));
+    child.once("error", (error) => finish(error));
+    child.once("close", (code) =>
+      code === 0
+        ? finish()
+        : finish(new Error(`${cmd} exit ${code}: ${err.slice(-800)}`)),
+    );
+    child.once("exit", (code) => {
+      if (code === 0) setTimeout(() => finish(), 250);
+    });
+    const timeout = setTimeout(() => {
+      child.kill();
+      finish(new Error(`${cmd} timed out after 4 minutes`));
+    }, 4 * 60 * 1_000);
   });
 }
 

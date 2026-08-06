@@ -12,6 +12,7 @@ import { downloadScenedStockMedia } from "@/services/providers/stock-media";
 import { downloadScenedAIMedia, retryScenesWithVariantPrompts } from "@/services/providers/pollinations";
 import { downloadScenedNanoBananaMedia } from "@/services/providers/nano-banana";
 import { renderVideo, type SceneClip } from "@/services/render/ffmpeg";
+import { writeKineticCaptions } from "@/services/pipeline";
 
 export type StoryPipelineParams = {
   story: string;
@@ -260,12 +261,18 @@ export async function renderStoryVideo(projectId: number): Promise<{ success: tr
   updateStoryProject(projectId, { status: "rendering" });
   try {
     const outputPath = path.join(mediaDir, "output.mp4");
+    const targetDuration = check.audioDuration || check.sceneClips.reduce((sum, scene) => sum + scene.seconds, 0);
+    const script = getStoryProject(projectId)?.script?.trim();
+    const subtitlePath = script
+      ? await writeKineticCaptions(script, targetDuration, check.aspectRatio, path.join(mediaDir, "kinetic-captions.ass"))
+      : undefined;
     await renderVideo({
       aspectRatio: check.aspectRatio,
       audioPath: check.audioPath,
       scenes: check.sceneClips,
+      subtitlePath,
       outputPath,
-      targetDuration: check.audioDuration || check.sceneClips.reduce((sum, scene) => sum + scene.seconds, 0),
+      targetDuration,
       bgmEnabled: check.bgmEnabled,
       animate: check.animate,
     });

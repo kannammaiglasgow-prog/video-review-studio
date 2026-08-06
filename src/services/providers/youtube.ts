@@ -166,7 +166,7 @@ export async function updateYoutubeVideoPrivacy(videoId: string, privacyStatus: 
   }
 }
 
-export type YoutubeUploadInput = { filePath: string; title: string; description: string; tags?: string[]; privacyStatus: "private" | "unlisted" | "public"; language?: "ta" | "en" };
+export type YoutubeUploadInput = { filePath: string; title: string; description: string; tags?: string[]; privacyStatus: "private" | "unlisted" | "public"; language?: "ta" | "en"; madeForKids?: boolean };
 
 export async function uploadToYoutube(input: YoutubeUploadInput, channelType?: ChannelType) {
   const token = await accessToken(channelType);
@@ -174,7 +174,7 @@ export async function uploadToYoutube(input: YoutubeUploadInput, channelType?: C
   const lang = input.language || "ta";
   const metadata = {
     snippet: { title: input.title.slice(0, 100), description: input.description.slice(0, 4900), tags: (input.tags || []).slice(0, 20), categoryId: "25", defaultLanguage: lang, defaultAudioLanguage: lang },
-    status: { privacyStatus: input.privacyStatus, selfDeclaredMadeForKids: false },
+    status: { privacyStatus: input.privacyStatus, selfDeclaredMadeForKids: Boolean(input.madeForKids) },
   };
   const start = await fetch("https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status", {
     method: "POST",
